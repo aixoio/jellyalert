@@ -1,2 +1,9 @@
-discord_webhook_url = "YOUR_DISCORD_WEBHOOK_URL"
-sqlite_database_path = "./example.server-core.db"
+# Sonarr base URL, including any reverse-proxy path, but excluding /api/v3.
+sonarr_url = "http://127.0.0.1:8989"
+sonarr_api_key = "YOUR_SONARR_API_KEY"
+discord_webhook_url = "https://discord.com/api/webhooks/WEBHOOK_ID/WEBHOOK_TOKEN"
+sqlite_database_path = "./jelly-alert.db"
+# Generate a private token of at least 32 printable ASCII characters.
+api_token = "REPLACE_WITH_A_LONG_RANDOM_SECRET_TOKEN"
+listen_address = "127.0.0.1:8090"
+scan_interval_seconds = 300
