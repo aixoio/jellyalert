@@ -23,7 +23,7 @@
 .status-list dd { text-align: right; }
 .empty-state { text-align: center; padding: 2.5rem 1rem; display: grid; gap: .75rem; justify-items: center; }
 .delivery-copy { max-width: 36rem; white-space: normal; overflow-wrap: anywhere; }
-.show-name { white-space: normal; overflow-wrap: anywhere; min-width: 10rem; }
+.show-name { white-space: normal; overflow-wrap: anywhere;  }
 .page-footer { padding-block: 1.5rem; display: flex; gap: 1rem; justify-content: space-between; flex-wrap: wrap; }
 .notice { margin-bottom: 1.5rem; }
 @media (max-width: 800px) { .dashboard { grid-template-columns: minmax(0, 1fr); } .shell { padding: 1rem; } }
