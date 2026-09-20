@@ -37,8 +37,8 @@
 @media (max-width: 1200px) { .shows-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .shell { gap: 2rem; grid-template-columns: 190px minmax(0, 1fr); } .dashboard { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 800px) { .shell { padding: 1rem; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; } .app-header { position: static; gap: 1rem; } .app-menu { flex-direction: row; flex-wrap: wrap; } .app-menu li { flex: 1; } .app-menu a { justify-content: center; } .page-heading { margin-bottom: 1.5rem; } }
 @media (max-width: 520px) { .shows-grid { grid-template-columns: minmax(0, 1fr); } .filter-field { flex: 1 1 100%; } .page-footer { display: grid; } }
-.show-identity { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 1rem; align-items: center; }
-.show-poster { aspect-ratio: 2 / 3; width: 64px; overflow: hidden; }
+.show-identity { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 1rem; align-items: center; }
+.show-poster { aspect-ratio: 2 / 3; width: 80px; overflow: hidden; }
 .show-poster img { width: 100%; height: 100%; object-fit: cover; }
 .poster-placeholder { display: grid; place-content: center; justify-items: center; gap: .75rem; width: 100%; height: 100%; }
 .activity-list { display: grid; gap: 1rem; list-style: none; padding: 0; margin: 0; }
