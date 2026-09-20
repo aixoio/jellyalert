@@ -67,6 +67,16 @@ pub fn plan(
         if due_at < tracking_since {
             continue;
         }
+        let mut numbers: Vec<_> = members.iter().map(|e| e.episode_number).collect();
+        numbers.sort_unstable();
+        if numbers
+            .iter()
+            .copied()
+            .zip(1_i64..)
+            .any(|(actual, expected)| actual != expected)
+        {
+            continue;
+        }
         let last_number = members.iter().map(|e| e.episode_number).max();
         let has_finale = members.iter().any(|e| {
             Some(e.episode_number) == last_number

@@ -142,8 +142,8 @@ impl Database {
     /// Reserve before sending: never automatically resend an ambiguous delivery.
     pub async fn claim(&self, plan: &PlannedNotification, now: i64) -> anyhow::Result<bool> {
         let mut tx = self.pool.begin().await?;
-        let result = sqlx::query("UPDATE notifications SET state = 'sending', attempted_at = ? WHERE key = ? AND state = 'pending' AND due_at <= ? AND mode = (SELECT mode FROM settings WHERE id = 1 AND webhook_disabled = 0 AND webhook_retry_at <= ?) AND EXISTS (SELECT 1 FROM shows WHERE id = notifications.series_id AND excluded = 0 AND active = 1)")
-            .bind(now).bind(&plan.key).bind(now).bind(now).execute(&mut *tx).await?;
+        let result = sqlx::query("UPDATE notifications SET state = 'sending', attempted_at = ? WHERE key = ? AND state = 'pending' AND due_at <= ? AND retry_at <= ? AND mode = (SELECT mode FROM settings WHERE id = 1 AND webhook_disabled = 0 AND webhook_retry_at <= ?) AND EXISTS (SELECT 1 FROM shows WHERE id = notifications.series_id AND excluded = 0 AND active = 1)")
+            .bind(now).bind(&plan.key).bind(now).bind(now).bind(now).execute(&mut *tx).await?;
         if result.rows_affected() == 0 {
             return Ok(false);
         }

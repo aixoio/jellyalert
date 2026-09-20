@@ -13,6 +13,7 @@ pub struct Discord {
 pub enum Delivery {
     Sent,
     RateLimited { retry_seconds: u64 },
+    Retryable { retry_seconds: u64 },
     Disabled,
     Rejected,
     Uncertain,
@@ -61,6 +62,9 @@ impl Discord {
             .await
         {
             Ok(response) => response,
+            Err(error) if error.is_connect() => {
+                return Ok(Delivery::Retryable { retry_seconds: 30 });
+            }
             Err(_) => return Ok(Delivery::Uncertain),
         };
         let status = response.status();

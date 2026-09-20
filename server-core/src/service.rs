@@ -71,6 +71,7 @@ impl Service {
                 eprintln!("Sonarr refresh failed for series {}: {error}", show.id);
                 failed += 1;
             }
+            self.wake.notify_one();
         }
         self.wake.notify_one();
         anyhow::ensure!(failed == 0, "{failed} series could not be refreshed");
@@ -84,7 +85,6 @@ impl Service {
         let episodes = self.sonarr.episodes(series.id).await?;
         let plans = planner::plan(series, &episodes, self.db.tracking_since().await?);
         self.db.replace_plans(series.id, &plans).await?;
-        self.wake.notify_one();
         Ok(plans)
     }
 
@@ -182,16 +182,16 @@ impl Service {
                 self.db.finish(&key, DeliveryState::Sent, finished).await?;
                 self.health.write().await.last_delivery_at = Some(finished);
             }
-            Delivery::RateLimited { retry_seconds } => {
+            Delivery::RateLimited { retry_seconds } | Delivery::Retryable { retry_seconds } => {
                 self.db
                     .rate_limited(&key, finished.saturating_add(retry_seconds as i64))
                     .await?
             }
             Delivery::Disabled => {
                 self.db.disable_webhook().await?;
-                self.db
-                    .finish(&key, DeliveryState::Failed, finished)
-                    .await?;
+                // Discord explicitly rejected this request, so it is safe to
+                // retain it for delivery after the webhook has been repaired.
+                self.db.rate_limited(&key, finished).await?;
                 eprintln!(
                     "Discord webhook disabled after rejection; update configuration and resume through the API"
                 );
