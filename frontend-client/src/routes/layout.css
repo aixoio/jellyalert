@@ -1,26 +1,39 @@
 @import "tailwindcss";
 @plugin "daisyui";
 
-/* Layout only. All component colors, typography and states come from DaisyUI. */
-.shell { max-width: 1240px; margin-inline: auto; padding: 1.5rem; }
-.app-header, .section-heading, .toolbar, .actions, .brand { display: flex; align-items: center; gap: 1rem; }
-.app-header, .section-heading { justify-content: space-between; }
-.app-header { padding-block: .5rem 1.5rem; flex-wrap: wrap; }
-.brand-mark { width: 2.5rem; height: 2.5rem; }
+/* Layout only: DaisyUI supplies component appearance and the default themes. */
+.shell { max-width: 1520px; margin-inline: auto; padding: 2rem; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 3rem; align-items: start; }
+.app-header { position: sticky; top: 2rem; display: grid; gap: 2rem; }
+.brand, .section-heading, .actions { display: flex; align-items: center; gap: 1rem; }
+.brand-mark { width: 2.5rem; height: 2.5rem; flex-shrink: 0; }
+.app-menu { width: 100%; }
+.app-content { min-width: 0; }
+.section-heading { justify-content: space-between; flex-wrap: wrap; }
+.heading-copy { display: grid; gap: .5rem; }
+.page-heading { margin-bottom: 2rem; }
 .page-stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
 .page-stack > *, .dashboard > * { min-width: 0; }
-.dashboard { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); gap: 1.5rem; align-items: start; }
-.section-heading { flex-wrap: wrap; }
-.toolbar { flex-wrap: wrap; }
-.toolbar .input { flex: 1; min-width: 180px; }
+.dashboard { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; align-items: start; }
+.shows-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+.show-card .card-body { gap: 1rem; }
+.show-name { overflow-wrap: anywhere; }
+.show-controls { margin-top: auto; display: grid; gap: .75rem; }
+.show-controls .select { width: 100%; }
+.tracking-control { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.show-toolbar { display: flex; flex-direction: row; align-items: end; flex-wrap: wrap; gap: 1rem; }
+.search-field { flex: 1 1 240px; }
+.filter-field { flex: 0 1 230px; }
+.search-field .input, .filter-field .select { width: 100%; }
 .scroll-region { min-width: 0; overflow-x: auto; }
 .status-list { display: grid; gap: 1rem; }
 .status-list > div { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 .status-list dd { text-align: right; }
 .empty-state { text-align: center; padding: 2.5rem 1rem; display: grid; gap: .75rem; justify-items: center; }
 .delivery-copy { max-width: 36rem; white-space: normal; overflow-wrap: anywhere; }
-.show-name { white-space: normal; overflow-wrap: anywhere;  }
 .page-footer { padding-block: 1.5rem; display: flex; gap: 1rem; justify-content: space-between; flex-wrap: wrap; }
 .notice { margin-bottom: 1.5rem; }
-@media (max-width: 800px) { .dashboard { grid-template-columns: minmax(0, 1fr); } .shell { padding: 1rem; } }
-.page-heading { margin-bottom: 1.5rem; }
+.skip-link { position: fixed; top: -10rem; left: 1rem; z-index: 10; }
+.skip-link:focus { top: 1rem; }
+@media (max-width: 1200px) { .shows-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .shell { gap: 2rem; grid-template-columns: 190px minmax(0, 1fr); } .dashboard { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 800px) { .shell { padding: 1rem; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; } .app-header { position: static; gap: 1rem; } .app-menu { flex-direction: row; flex-wrap: wrap; } .app-menu li { flex: 1; } .app-menu a { justify-content: center; } .page-heading { margin-bottom: 1.5rem; } }
+@media (max-width: 520px) { .shows-grid { grid-template-columns: minmax(0, 1fr); } .filter-field { flex: 1 1 100%; } .page-footer { display: grid; } }
