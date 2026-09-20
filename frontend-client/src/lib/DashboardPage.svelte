@@ -169,10 +169,9 @@
 						<div class="shows-grid">
                             {#each pagedShows as show (show.id)}
                                 <article class="card card-border show-card" aria-label={show.title}>
-                                    <ShowPoster id={show.id} />
                                     <div class="card-body">
                                         <div class="section-heading"><span class="badge" class:badge-ghost={!show.active || show.excluded} class:badge-success={show.active && !show.excluded} class:badge-soft={show.active && !show.excluded}>{!show.active ? 'Removed from Sonarr' : show.excluded ? 'Excluded' : 'Tracked'}</span>{#if busy === `show:${show.id}` || busy === `mode:${show.id}`}<span class="loading loading-spinner loading-xs" aria-label="Saving"></span>{/if}</div>
-                                        <h2 class="card-title show-name">{show.title}</h2>
+                                        <div class="show-identity"><ShowPoster id={show.id} /><h2 class="card-title show-name">{show.title}</h2></div>
                                         <div class="show-controls">
                                             <label class="fieldset"><span class="fieldset-legend">Notify me</span><select class="select" aria-label={`Notification mode for ${show.title}`} value={show.mode} disabled={locked || !show.active}
                                         onchange={(event) => {
