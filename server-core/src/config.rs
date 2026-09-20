@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ServerConfig {
     pub discord_webhook_url: String,
+    pub sqlite_database_path: String,
 }
 
 impl ServerConfig {
