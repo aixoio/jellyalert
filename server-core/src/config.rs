@@ -11,7 +11,9 @@ pub struct ServerConfig {
     pub sqlite_database_path: String,
     pub sonarr_url: String,
     pub sonarr_api_key: String,
-    pub api_token: String,
+    // Accept old configuration files without requiring or using their token.
+    #[serde(default, rename = "api_token")]
+    pub _legacy_api_token: Option<String>,
     #[serde(default = "default_listen")]
     pub listen_address: SocketAddr,
     #[serde(default = "default_poll")]
@@ -43,10 +45,6 @@ impl ServerConfig {
         ensure!(
             !self.sonarr_api_key.trim().is_empty(),
             "Sonarr API key is required"
-        );
-        ensure!(
-            self.api_token.len() >= 32 && self.api_token.bytes().all(|b| b.is_ascii_graphic()),
-            "API token must contain at least 32 printable ASCII characters"
         );
         ensure!(
             (10..=86400).contains(&self.scan_interval_seconds),

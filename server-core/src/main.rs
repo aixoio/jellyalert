@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
     });
     let mut api_shutdown = receiver;
     tasks.spawn(async move {
-        axum::serve(listener, api::router(service, config.api_token))
+        axum::serve(listener, api::router(service))
             .with_graceful_shutdown(async move {
                 if !*api_shutdown.borrow() {
                     let _ = api_shutdown.changed().await;

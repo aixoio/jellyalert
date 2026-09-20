@@ -1,11 +1,9 @@
-//! JSON API for the future web frontend. Every endpoint requires bearer authentication.
-use std::sync::Arc;
+//! JSON API for trusted LAN clients. No authentication is required.
 
 use axum::{
     Json, Router,
-    extract::{Path, Query, Request, State},
+    extract::{Path, Query, State},
     http::StatusCode,
-    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post, put},
 };
@@ -20,14 +18,10 @@ use crate::{
 #[derive(Clone)]
 pub struct ApiState {
     pub service: Service,
-    token: Arc<str>,
 }
 
-pub fn router(service: Service, token: String) -> Router {
-    let state = ApiState {
-        service,
-        token: token.into(),
-    };
+pub fn router(service: Service) -> Router {
+    let state = ApiState { service };
     Router::new()
         .route("/api/health", get(health))
         .route("/api/settings", get(settings).put(update_settings))
@@ -35,36 +29,7 @@ pub fn router(service: Service, token: String) -> Router {
         .route("/api/shows/{id}/exclusion", put(exclude))
         .route("/api/notifications", get(notifications))
         .route("/api/webhook/resume", post(resume))
-        .layer(middleware::from_fn_with_state(state.clone(), authenticate))
         .with_state(state)
-}
-
-async fn authenticate(State(state): State<ApiState>, request: Request, next: Next) -> Response {
-    let token = request
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "));
-    if !token.is_some_and(|value| tokens_equal(value.as_bytes(), state.token.as_bytes())) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorBody {
-                error: "valid bearer token required",
-            }),
-        )
-            .into_response();
-    }
-    next.run(request).await
-}
-
-fn tokens_equal(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    left.iter()
-        .zip(right)
-        .fold(0_u8, |difference, (a, b)| difference | (a ^ b))
-        == 0
 }
 
 #[derive(Serialize)]
@@ -196,6 +161,8 @@ struct Notification {
     series_id: i64,
     mode: NotificationMode,
     due_at: i64,
+    season: i64,
+    content: String,
     state: NotificationState,
     attempted_at: Option<i64>,
     sent_at: Option<i64>,
@@ -230,7 +197,7 @@ async fn notifications(
     State(state): State<ApiState>,
     Query(page): Query<Page>,
 ) -> ApiResult<Vec<Notification>> {
-    let rows = sqlx::query("SELECT key, series_id, mode, due_at, state, attempted_at, sent_at FROM notifications ORDER BY due_at DESC, key LIMIT ? OFFSET ?")
+    let rows = sqlx::query("SELECT key, series_id, mode, due_at, season, content, state, attempted_at, sent_at FROM notifications ORDER BY due_at DESC, key LIMIT ? OFFSET ?")
         .bind(page.limit.unwrap_or(50).clamp(1, 100)).bind(page.offset.unwrap_or(0)).fetch_all(state.service.db.pool()).await?;
     let notifications = rows
         .iter()
@@ -240,6 +207,8 @@ async fn notifications(
                 series_id: row.try_get("series_id")?,
                 mode: NotificationMode::try_from(row.try_get::<&str, _>("mode")?)?,
                 due_at: row.try_get("due_at")?,
+                season: row.try_get("season")?,
+                content: row.try_get("content")?,
                 state: NotificationState::try_from(row.try_get::<&str, _>("state")?)?,
                 attempted_at: row.try_get("attempted_at")?,
                 sent_at: row.try_get("sent_at")?,

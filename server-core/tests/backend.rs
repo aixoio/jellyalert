@@ -26,7 +26,6 @@ use server_core::{
 };
 
 static NEXT_DB: AtomicU64 = AtomicU64::new(0);
-const TOKEN: &str = "test-token-with-at-least-32-characters";
 
 struct TestDb {
     db: Database,
@@ -493,11 +492,11 @@ async fn disabled_webhook_stops_further_delivery() {
 }
 
 #[tokio::test]
-async fn api_authentication_validation_and_persistent_policy() {
+async fn api_trusted_lan_validation_and_persistent_policy() {
     let fixture = TestDb::new().await;
     let mock = mock_server().await;
     fixture.db.sync_shows(&[(1, "Show".into())]).await.unwrap();
-    let router = api::router(service(fixture.db.clone(), &mock), TOKEN.into());
+    let router = api::router(service(fixture.db.clone(), &mock));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
@@ -511,11 +510,10 @@ async fn api_authentication_validation_and_persistent_policy() {
             .await
             .unwrap()
             .status(),
-        StatusCode::UNAUTHORIZED
+        StatusCode::OK
     );
     let response = client
         .put(format!("{base}/api/settings"))
-        .bearer_auth(TOKEN)
         .header("Content-Type", "application/json")
         .body(r#"{"mode":"season"}"#)
         .send()
@@ -525,7 +523,6 @@ async fn api_authentication_validation_and_persistent_policy() {
     assert_eq!(fixture.db.mode().await.unwrap(), NotificationMode::Season);
     let invalid = client
         .put(format!("{base}/api/settings"))
-        .bearer_auth(TOKEN)
         .header("Content-Type", "application/json")
         .body(r#"{"mode":"nonsense"}"#)
         .send()
@@ -534,7 +531,6 @@ async fn api_authentication_validation_and_persistent_policy() {
     assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let response = client
         .put(format!("{base}/api/shows/1/exclusion"))
-        .bearer_auth(TOKEN)
         .header("Content-Type", "application/json")
         .body(r#"{"excluded":true}"#)
         .send()
@@ -546,7 +542,6 @@ async fn api_authentication_validation_and_persistent_policy() {
         assert_eq!(
             client
                 .get(format!("{base}{path}"))
-                .bearer_auth(TOKEN)
                 .send()
                 .await
                 .unwrap()
