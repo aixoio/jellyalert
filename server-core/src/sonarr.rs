@@ -78,6 +78,24 @@ impl Sonarr {
         Ok(Self { client, base })
     }
 
+    /// Fetch only Sonarr's fixed JPEG poster path; never follow external artwork URLs.
+    pub async fn poster(&self, id: i64) -> anyhow::Result<Option<Vec<u8>>> {
+        ensure!(id > 0, "invalid series identifier");
+        let response = self
+            .client
+            .get(self.base.join(&format!("mediacover/{id}/poster.jpg"))?)
+            .send()
+            .await
+            .map_err(|e| e.without_url())?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let response = response.error_for_status().map_err(|e| e.without_url())?;
+        let body = bounded_body(response, 5 * 1024 * 1024).await?;
+        ensure!(body.starts_with(&[0xff, 0xd8, 0xff]), "invalid JPEG poster");
+        Ok(Some(body))
+    }
+
     pub async fn series(&self) -> anyhow::Result<Vec<Series>> {
         self.get("series", None).await
     }

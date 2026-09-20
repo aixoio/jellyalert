@@ -387,6 +387,20 @@ async fn mock_server() -> MockServer {
                 },
             ),
         )
+        .route(
+            "/sonarr/api/v3/mediacover/1/poster.jpg",
+            get(|headers: HeaderMap| async move {
+                assert_eq!(headers.get("X-Api-Key").unwrap(), "sonarr-secret");
+                (
+                    [("content-type", "image/jpeg")],
+                    vec![0xff_u8, 0xd8, 0xff, 0xd9],
+                )
+            }),
+        )
+        .route(
+            "/sonarr/api/v3/mediacover/2/poster.jpg",
+            get(|| async { "not an image" }),
+        )
         .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -827,4 +841,57 @@ async fn per_show_migration_preserves_legacy_policy_and_history() {
     assert_eq!(state, "sent");
     db.pool().close().await;
     drop(TestDb { db, path });
+}
+
+#[tokio::test]
+async fn poster_proxy_bounds_sources_and_rejects_invalid_images() {
+    let fixture = TestDb::new().await;
+    let mock = mock_server().await;
+    fixture
+        .db
+        .sync_shows(&[
+            (1, "Artwork".into()),
+            (2, "Invalid".into()),
+            (3, "Missing".into()),
+        ])
+        .await
+        .unwrap();
+    let router = api::router(service(fixture.db.clone(), &mock));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{base}/api/shows/1/poster"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "image/jpeg");
+    assert_eq!(
+        response.headers()["cache-control"],
+        "private, max-age=86400"
+    );
+    assert_eq!(
+        response.bytes().await.unwrap().as_ref(),
+        &[0xff, 0xd8, 0xff, 0xd9]
+    );
+    for (id, expected) in [
+        (2, StatusCode::BAD_GATEWAY),
+        (3, StatusCode::NOT_FOUND),
+        (99, StatusCode::NOT_FOUND),
+    ] {
+        assert_eq!(
+            client
+                .get(format!("{base}/api/shows/{id}/poster"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            expected
+        );
+    }
+    task.abort();
 }

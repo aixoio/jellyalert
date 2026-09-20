@@ -26,6 +26,7 @@ pub fn router(service: Service) -> Router {
         .route("/api/health", get(health))
         .route("/api/shows/{id}/mode", put(update_show_mode))
         .route("/api/shows", get(shows))
+        .route("/api/shows/{id}/poster", get(poster))
         .route("/api/shows/{id}/exclusion", put(exclude))
         .route("/api/notifications", get(notifications))
         .route("/api/webhook/resume", post(resume))
@@ -85,6 +86,29 @@ async fn update_show_mode(
 
 async fn shows(State(state): State<ApiState>) -> ApiResult<Vec<Show>> {
     Ok(Json(state.service.db.shows().await?))
+}
+
+async fn poster(State(state): State<ApiState>, Path(id): Path<i64>) -> Result<Response, ApiError> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM shows WHERE id = ?)")
+        .bind(id)
+        .fetch_one(state.service.db.pool())
+        .await?;
+    if !exists {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+    Ok(match state.service.sonarr.poster(id).await {
+        Ok(Some(bytes)) => (
+            [
+                ("content-type", "image/jpeg"),
+                ("cache-control", "private, max-age=86400"),
+                ("x-content-type-options", "nosniff"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(_) => StatusCode::BAD_GATEWAY.into_response(),
+    })
 }
 
 #[derive(Deserialize)]

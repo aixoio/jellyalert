@@ -94,3 +94,5 @@ Integration tests bind local loopback sockets, use temporary SQLite files, and d
 - [Discord rate limits](https://docs.discord.com/developers/topics/rate-limits)
 - [SQLx Migrator](https://docs.rs/sqlx/latest/sqlx/migrate/struct.Migrator.html)
 - [Axum server lifecycle](https://docs.rs/axum/latest/axum/serve/fn.serve.html)
+
+Show artwork: `GET /api/shows/{id}/poster` proxies Sonarr’s JPEG poster for a known show. Images are capped at 5 MiB, redirects are disabled, and successful responses are privately cacheable for 24 hours. Missing artwork returns 404; upstream failures or invalid images return 502. No Sonarr credentials reach the browser.
