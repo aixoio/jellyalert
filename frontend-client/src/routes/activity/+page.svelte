@@ -2,4 +2,4 @@
 	import DashboardPage from '$lib/DashboardPage.svelte';
 </script>
 
-<DashboardPage section="overview" />
+<DashboardPage section="activity" />

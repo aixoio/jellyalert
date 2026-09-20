@@ -14,7 +14,9 @@ Open port 5173 on this machine or its LAN address. Start Server Core on `127.0.0
 
 The backend no longer requires `api_token`; older config files containing that field still work. Sonarr credentials, Discord webhook, scan interval, and listen/database paths remain in Server Core's TOML configuration and require a backend restart when changed. They are not sent to browsers.
 
-## Controls
+## Pages and controls
+
+The shared navigation opens three separate SvelteKit routes: **Overview** (`/`), **Shows** (`/shows`), and **Activity** (`/activity`). Each route can be bookmarked or refreshed directly and only requests its own data. Overview contains service status and webhook recovery; Shows contains per-series preferences; Activity contains upcoming alerts and delivery history.
 
 - **Shows:** search, filter, paginate, toggle tracking, and choose **Every episode** or **Full seasons** independently for each show. Choices save immediately and do not change other shows. New shows default to episode alerts; existing shows retain their previous global preference after migration. Excluded shows never create new Discord delivery attempts; prior history remains.
 - **Activity:** upcoming alerts show only each show’s mode and active, non-excluded shows, ordered by the next air time. Delivery history includes sent, failed, unconfirmed, recorded, and already-covered attempts. Expand a message to read its plain text.

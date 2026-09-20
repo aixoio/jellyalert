@@ -23,3 +23,4 @@
 .page-footer { padding-block: 1.5rem; display: flex; gap: 1rem; justify-content: space-between; flex-wrap: wrap; }
 .notice { margin-bottom: 1.5rem; }
 @media (max-width: 800px) { .dashboard { grid-template-columns: minmax(0, 1fr); } .shell { padding: 1rem; } }
+.page-heading { margin-bottom: 1.5rem; }
