@@ -176,7 +176,7 @@ async fn migrations_restart_and_deduplication() {
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(count, 1);
+    assert_eq!(count, 2);
     reopened.pool().close().await;
 }
 
@@ -208,9 +208,11 @@ async fn exclusions_modes_and_removed_shows_block_claims() {
     db.sync_shows(&[(1, "Renamed".into())]).await.unwrap();
     assert!(db.shows().await.unwrap()[0].excluded);
     db.set_excluded(1, false).await.unwrap();
-    db.set_mode(NotificationMode::Season).await.unwrap();
+    db.set_show_mode(1, NotificationMode::Season).await.unwrap();
     assert!(!db.claim(&plans[0], 100).await.unwrap());
-    db.set_mode(NotificationMode::Episode).await.unwrap();
+    db.set_show_mode(1, NotificationMode::Episode)
+        .await
+        .unwrap();
     db.sync_shows(&[]).await.unwrap();
     assert!(!db.claim(&plans[0], 100).await.unwrap());
 }
@@ -224,7 +226,7 @@ async fn season_delivery_covers_episodes_across_mode_changes() {
     last.finale_type = Some(FinaleType::Season);
     let plans = plan(&series(), &[episode(1, 1, 100), last], 0);
     db.replace_plans(1, &plans).await.unwrap();
-    db.set_mode(NotificationMode::Season).await.unwrap();
+    db.set_show_mode(1, NotificationMode::Season).await.unwrap();
     let season = plans
         .iter()
         .find(|p| p.mode == NotificationMode::Season)
@@ -233,7 +235,9 @@ async fn season_delivery_covers_episodes_across_mode_changes() {
     db.finish(&season.key, DeliveryState::Sent, 200)
         .await
         .unwrap();
-    db.set_mode(NotificationMode::Episode).await.unwrap();
+    db.set_show_mode(1, NotificationMode::Episode)
+        .await
+        .unwrap();
     assert!(db.next_due().await.unwrap().is_none());
     assert!(!db.claim(&plans[0], 200).await.unwrap());
 }
@@ -251,7 +255,7 @@ async fn already_notified_episodes_do_not_create_a_season_loop() {
     db.finish(&plans[0].key, DeliveryState::Sent, 100)
         .await
         .unwrap();
-    db.set_mode(NotificationMode::Season).await.unwrap();
+    db.set_show_mode(1, NotificationMode::Season).await.unwrap();
     let season = plans
         .iter()
         .find(|p| p.mode == NotificationMode::Season)
@@ -505,7 +509,7 @@ async fn api_trusted_lan_validation_and_persistent_policy() {
     let client = reqwest::Client::new();
     assert_eq!(
         client
-            .get(format!("{base}/api/settings"))
+            .get(format!("{base}/api/shows"))
             .send()
             .await
             .unwrap()
@@ -513,16 +517,19 @@ async fn api_trusted_lan_validation_and_persistent_policy() {
         StatusCode::OK
     );
     let response = client
-        .put(format!("{base}/api/settings"))
+        .put(format!("{base}/api/shows/1/mode"))
         .header("Content-Type", "application/json")
         .body(r#"{"mode":"season"}"#)
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(fixture.db.mode().await.unwrap(), NotificationMode::Season);
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        fixture.db.shows().await.unwrap()[0].mode,
+        NotificationMode::Season
+    );
     let invalid = client
-        .put(format!("{base}/api/settings"))
+        .put(format!("{base}/api/shows/1/mode"))
         .header("Content-Type", "application/json")
         .body(r#"{"mode":"nonsense"}"#)
         .send()
@@ -654,7 +661,7 @@ async fn activity_views_filter_policy_paginate_and_include_message_details() {
         upcoming[1]
     );
     assert!(get_page("view=history").await.is_empty());
-    db.set_mode(NotificationMode::Season).await.unwrap();
+    db.set_show_mode(1, NotificationMode::Season).await.unwrap();
     let seasons = get_page("view=upcoming").await;
     assert_eq!(seasons.len(), 1);
     assert_eq!(seasons[0]["mode"], "season");
@@ -664,7 +671,9 @@ async fn activity_views_filter_policy_paginate_and_include_message_details() {
     db.sync_shows(&[]).await.unwrap();
     assert!(get_page("view=upcoming").await.is_empty());
     db.sync_shows(&[(1, "Test Show".into())]).await.unwrap();
-    db.set_mode(NotificationMode::Episode).await.unwrap();
+    db.set_show_mode(1, NotificationMode::Episode)
+        .await
+        .unwrap();
     let first = plans
         .iter()
         .find(|item| item.episode_id == Some(1))
@@ -688,4 +697,134 @@ async fn activity_views_filter_policy_paginate_and_include_message_details() {
         StatusCode::BAD_REQUEST
     );
     task.abort();
+}
+
+#[tokio::test]
+async fn individual_modes_control_deadlines_claims_and_survive_rescans() {
+    let fixture = TestDb::new().await;
+    let db = &fixture.db;
+    db.sync_shows(&[(1, "Episodes".into()), (2, "Seasons".into())])
+        .await
+        .unwrap();
+    let first = plan(&series(), &[episode(1, 1, 100)], 0);
+    let mut second_series = series();
+    second_series.id = 2;
+    let mut second_episode = episode(2, 1, 200);
+    second_episode.series_id = 2;
+    second_episode.finale_type = Some(FinaleType::Season);
+    let second = plan(&second_series, &[second_episode], 0);
+    db.replace_plans(1, &first).await.unwrap();
+    db.replace_plans(2, &second).await.unwrap();
+    assert!(db.set_show_mode(2, NotificationMode::Season).await.unwrap());
+    assert!(
+        !db.set_show_mode(999, NotificationMode::Season)
+            .await
+            .unwrap()
+    );
+    assert_eq!(db.next_due().await.unwrap().unwrap().0, first[0].key);
+    assert!(db.claim(&first[0], 100).await.unwrap());
+    let episode_plan = second
+        .iter()
+        .find(|p| p.mode == NotificationMode::Episode)
+        .unwrap();
+    let season_plan = second
+        .iter()
+        .find(|p| p.mode == NotificationMode::Season)
+        .unwrap();
+    assert_eq!(db.next_due().await.unwrap().unwrap().0, season_plan.key);
+    assert!(!db.claim(episode_plan, 200).await.unwrap());
+    // A mode change after selecting a deadline must invalidate that old claim.
+    db.set_show_mode(2, NotificationMode::Episode)
+        .await
+        .unwrap();
+    assert!(!db.claim(season_plan, 200).await.unwrap());
+    db.set_show_mode(2, NotificationMode::Season).await.unwrap();
+    assert!(db.claim(season_plan, 200).await.unwrap());
+    db.sync_shows(&[]).await.unwrap();
+    db.sync_shows(&[
+        (1, "Renamed episodes".into()),
+        (2, "Renamed seasons".into()),
+        (3, "New show".into()),
+    ])
+    .await
+    .unwrap();
+    let reopened = Database::connect(fixture.path.to_str().unwrap())
+        .await
+        .unwrap();
+    let shows = reopened.shows().await.unwrap();
+    assert_eq!(
+        shows.iter().find(|s| s.id == 1).unwrap().mode,
+        NotificationMode::Episode
+    );
+    assert_eq!(
+        shows.iter().find(|s| s.id == 2).unwrap().mode,
+        NotificationMode::Season
+    );
+    assert_eq!(
+        shows.iter().find(|s| s.id == 3).unwrap().mode,
+        NotificationMode::Episode
+    );
+    reopened.pool().close().await;
+}
+
+#[tokio::test]
+async fn per_show_migration_preserves_legacy_policy_and_history() {
+    use sqlx::{
+        SqlSafeStr,
+        migrate::{Migration, MigrationType, Migrator},
+        sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    };
+    let path = std::env::temp_dir().join(format!(
+        "jelly-alert-legacy-{}-{}.db",
+        std::process::id(),
+        NEXT_DB.fetch_add(1, Ordering::Relaxed)
+    ));
+    let pool = SqlitePoolOptions::new()
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    Migrator::with_migrations(vec![Migration::new(
+        202609200001,
+        "initial".into(),
+        MigrationType::Simple,
+        include_str!("../migrations/202609200001_initial.sql").into_sql_str(),
+        false,
+    )])
+    .run(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO settings (id, mode, tracking_since) VALUES (1, 'season', 123)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO shows (id, title, excluded) VALUES (1, 'Existing show', 1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO notifications (key, series_id, mode, season, due_at, content, state) VALUES ('old', 1, 'season', 1, 100, 'Already sent', 'sent')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO covered_episodes VALUES (1, 'old')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    let db = Database::connect(path.to_str().unwrap()).await.unwrap();
+    assert_eq!(db.shows().await.unwrap()[0].mode, NotificationMode::Season);
+    assert!(db.shows().await.unwrap()[0].excluded);
+    assert_eq!(db.tracking_since().await.unwrap(), 123);
+    let covered: i64 = sqlx::query_scalar("SELECT count(*) FROM covered_episodes")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(covered, 1);
+    let state: String = sqlx::query_scalar("SELECT state FROM notifications WHERE key = 'old'")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(state, "sent");
+    db.pool().close().await;
+    drop(TestDb { db, path });
 }

@@ -35,6 +35,7 @@ pub struct Show {
     pub title: String,
     pub excluded: bool,
     pub active: bool,
+    pub mode: NotificationMode,
 }
 
 #[derive(Debug, Clone)]

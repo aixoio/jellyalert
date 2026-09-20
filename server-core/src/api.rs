@@ -24,7 +24,7 @@ pub fn router(service: Service) -> Router {
     let state = ApiState { service };
     Router::new()
         .route("/api/health", get(health))
-        .route("/api/settings", get(settings).put(update_settings))
+        .route("/api/shows/{id}/mode", put(update_show_mode))
         .route("/api/shows", get(shows))
         .route("/api/shows/{id}/exclusion", put(exclude))
         .route("/api/notifications", get(notifications))
@@ -68,20 +68,19 @@ struct Settings {
     mode: NotificationMode,
 }
 
-async fn settings(State(state): State<ApiState>) -> ApiResult<Settings> {
-    Ok(Json(Settings {
-        mode: state.service.db.mode().await?,
-    }))
-}
-
-async fn update_settings(
+async fn update_show_mode(
     State(state): State<ApiState>,
+    Path(id): Path<i64>,
     Json(settings): Json<Settings>,
-) -> ApiResult<Settings> {
+) -> Result<StatusCode, ApiError> {
     let _guard = state.service.delivery_gate.lock().await;
-    state.service.db.set_mode(settings.mode).await?;
+    let found = state.service.db.set_show_mode(id, settings.mode).await?;
     state.service.wake.notify_one();
-    Ok(Json(settings))
+    Ok(if found {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::NOT_FOUND
+    })
 }
 
 async fn shows(State(state): State<ApiState>) -> ApiResult<Vec<Show>> {
@@ -207,7 +206,7 @@ async fn notifications(
 ) -> ApiResult<Vec<Notification>> {
     let query = match page.view {
         Some(NotificationView::Upcoming) => {
-            "SELECT n.key, n.series_id, n.mode, n.due_at, n.season, n.content, n.state, n.attempted_at, n.sent_at FROM notifications n JOIN shows s ON s.id = n.series_id WHERE n.state = 'pending' AND n.mode = (SELECT mode FROM settings WHERE id = 1) AND s.active = 1 AND s.excluded = 0 ORDER BY n.due_at ASC, n.key LIMIT ? OFFSET ?"
+            "SELECT n.key, n.series_id, n.mode, n.due_at, n.season, n.content, n.state, n.attempted_at, n.sent_at FROM notifications n JOIN shows s ON s.id = n.series_id WHERE n.state = 'pending' AND n.mode = s.mode AND s.active = 1 AND s.excluded = 0 ORDER BY n.due_at ASC, n.key LIMIT ? OFFSET ?"
         }
         Some(NotificationView::History) => {
             "SELECT key, series_id, mode, due_at, season, content, state, attempted_at, sent_at FROM notifications WHERE state <> 'pending' ORDER BY due_at DESC, key LIMIT ? OFFSET ?"

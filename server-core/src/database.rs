@@ -34,13 +34,22 @@ impl Database {
 
     async fn migrate(&self) -> anyhow::Result<()> {
         // Embed SQL, not generated Rust: the SQLx migrator still validates checksums.
-        Migrator::with_migrations(vec![Migration::new(
-            202609200001,
-            "initial".into(),
-            MigrationType::Simple,
-            include_str!("../migrations/202609200001_initial.sql").into_sql_str(),
-            false,
-        )])
+        Migrator::with_migrations(vec![
+            Migration::new(
+                202609200001,
+                "initial".into(),
+                MigrationType::Simple,
+                include_str!("../migrations/202609200001_initial.sql").into_sql_str(),
+                false,
+            ),
+            Migration::new(
+                202609200002,
+                "per show mode".into(),
+                MigrationType::Simple,
+                include_str!("../migrations/202609200002_per_show_mode.sql").into_sql_str(),
+                false,
+            ),
+        ])
         .run(&self.pool)
         .await?;
         sqlx::query("INSERT OR IGNORE INTO settings (id, tracking_since) VALUES (1, unixepoch())")
@@ -53,19 +62,14 @@ impl Database {
         &self.pool
     }
 
-    pub async fn mode(&self) -> anyhow::Result<NotificationMode> {
-        let value: String = sqlx::query_scalar("SELECT mode FROM settings WHERE id = 1")
-            .fetch_one(&self.pool)
-            .await?;
-        NotificationMode::try_from(value.as_str())
-    }
-
-    pub async fn set_mode(&self, mode: NotificationMode) -> anyhow::Result<()> {
-        sqlx::query("UPDATE settings SET mode = ? WHERE id = 1")
+    pub async fn set_show_mode(&self, id: i64, mode: NotificationMode) -> anyhow::Result<bool> {
+        Ok(sqlx::query("UPDATE shows SET mode = ? WHERE id = ?")
             .bind(mode.as_str())
+            .bind(id)
             .execute(&self.pool)
-            .await?;
-        Ok(())
+            .await?
+            .rows_affected()
+            == 1)
     }
 
     pub async fn tracking_since(&self) -> anyhow::Result<i64> {
@@ -77,7 +81,7 @@ impl Database {
     }
 
     pub async fn shows(&self) -> anyhow::Result<Vec<Show>> {
-        sqlx::query("SELECT id, title, excluded, active FROM shows ORDER BY title, id")
+        sqlx::query("SELECT id, title, excluded, active, mode FROM shows ORDER BY title, id")
             .fetch_all(&self.pool)
             .await?
             .iter()
@@ -87,6 +91,7 @@ impl Database {
                     title: row.try_get("title")?,
                     excluded: row.try_get("excluded")?,
                     active: row.try_get("active")?,
+                    mode: NotificationMode::try_from(row.try_get::<&str, _>("mode")?)?,
                 })
             })
             .collect()
@@ -135,14 +140,14 @@ impl Database {
     }
 
     pub async fn next_due(&self) -> anyhow::Result<Option<(String, i64, i64)>> {
-        Ok(sqlx::query_as("SELECT n.key, n.series_id, max(n.due_at, n.retry_at, s.webhook_retry_at) FROM notifications n JOIN shows sh ON sh.id = n.series_id JOIN settings s ON s.id = 1 WHERE n.state = 'pending' AND n.mode = s.mode AND sh.excluded = 0 AND sh.active = 1 AND s.webhook_disabled = 0 AND (n.episode_id IS NULL OR NOT EXISTS (SELECT 1 FROM covered_episodes c WHERE c.episode_id = n.episode_id)) ORDER BY max(n.due_at, n.retry_at, s.webhook_retry_at), n.key LIMIT 1")
+        Ok(sqlx::query_as("SELECT n.key, n.series_id, max(n.due_at, n.retry_at, s.webhook_retry_at) FROM notifications n JOIN shows sh ON sh.id = n.series_id JOIN settings s ON s.id = 1 WHERE n.state = 'pending' AND n.mode = sh.mode AND sh.excluded = 0 AND sh.active = 1 AND s.webhook_disabled = 0 AND (n.episode_id IS NULL OR NOT EXISTS (SELECT 1 FROM covered_episodes c WHERE c.episode_id = n.episode_id)) ORDER BY max(n.due_at, n.retry_at, s.webhook_retry_at), n.key LIMIT 1")
             .fetch_optional(&self.pool).await?)
     }
 
     /// Reserve before sending: never automatically resend an ambiguous delivery.
     pub async fn claim(&self, plan: &PlannedNotification, now: i64) -> anyhow::Result<bool> {
         let mut tx = self.pool.begin().await?;
-        let result = sqlx::query("UPDATE notifications SET state = 'sending', attempted_at = ? WHERE key = ? AND state = 'pending' AND due_at <= ? AND retry_at <= ? AND mode = (SELECT mode FROM settings WHERE id = 1 AND webhook_disabled = 0 AND webhook_retry_at <= ?) AND EXISTS (SELECT 1 FROM shows WHERE id = notifications.series_id AND excluded = 0 AND active = 1)")
+        let result = sqlx::query("UPDATE notifications SET state = 'sending', attempted_at = ? WHERE key = ? AND state = 'pending' AND due_at <= ? AND retry_at <= ? AND EXISTS (SELECT 1 FROM settings WHERE id = 1 AND webhook_disabled = 0 AND webhook_retry_at <= ?) AND EXISTS (SELECT 1 FROM shows WHERE id = notifications.series_id AND mode = notifications.mode AND excluded = 0 AND active = 1)")
             .bind(now).bind(&plan.key).bind(now).bind(now).bind(now).execute(&mut *tx).await?;
         if result.rows_affected() == 0 {
             return Ok(false);
