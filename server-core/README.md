@@ -1,17 +1,17 @@
 # Jelly Alert backend
 
-Rust service that reads Sonarr's v3 API, schedules Discord notifications, and exposes a JSON API for a future frontend. No frontend or download client is included.
+Rust service that reads Sonarr's v3 API, schedules Discord notifications, and exposes a JSON API for the SvelteKit client in `../frontend-client`. No download client is included.
 
 ## Run
 
 ```sh
 cd server-core
 cp server-config.example.toml server-config.toml
-# Edit server-config.toml with your Sonarr URL/key, Discord webhook, and API token.
+# Edit server-config.toml with your Sonarr URL/key, Discord webhook.
 cargo run --release -- server-config.toml
 ```
 
-Generate an API token with `openssl rand -hex 32`. Keep the config private (`chmod 600 server-config.toml`). The Sonarr URL is the instance's base URL, including a reverse-proxy subpath if needed, without `/api/v3`. The default API address is `127.0.0.1:8090`.
+Keep the config private (`chmod 600 server-config.toml`). The Sonarr URL is the instance's base URL, including a reverse-proxy subpath if needed, without `/api/v3`. The default API address is `127.0.0.1:8090`.
 
 SQLite is created automatically at `sqlite_database_path`. Relative paths resolve from the process's working directory. SQL migrations live in `migrations/`, are embedded as SQL using `include_str!`, and run through SQLx's `Migrator` with checksum verification. Deployment needs the binary and configuration, not the source tree or a migration directory. No SQLx code-generation macros are used; the SQLx macros feature is disabled. Both Rust crate roots forbid unsafe code.
 
@@ -45,11 +45,11 @@ Consequently, a crash between reserving and posting, or an ambiguous network fai
 
 A definite connection failure before transmission is retried after 30 seconds. Discord 429 responses release the reservation and persist their retry delay. A 401/403/404 disables the webhook globally to avoid hammering a revoked endpoint; its definitely rejected notification stays pending. After repairing the config and restarting, call `/api/webhook/resume`. Other 4xx responses are recorded as `failed`. Configuration is read at startup, so changes to credentials require a restart.
 
-No real Sonarr or Discord credentials were used during development. Tests use local mock HTTP servers; production integration and months of uptime have not been empirically verified.
+Automated tests use local mock HTTP servers. The frontend has also been checked against a live Sonarr-backed development instance; months of uptime have not been empirically verified.
 
 ## API
 
-All endpoints require `Authorization: Bearer <api_token>`. JSON mutation bodies require `Content-Type: application/json`. Secret configuration is never returned. There is no cross-origin browser access by default; a future frontend can share the API's origin. For access beyond localhost, put it behind an HTTPS reverse proxy and keep the API token private.
+All endpoints are unauthenticated for trusted LAN use. JSON mutation bodies require `Content-Type: application/json`. Secret configuration is never returned. The SvelteKit client proxies requests on the same origin to this API; no CORS configuration is necessary. Existing `api_token` configuration entries are accepted but ignored.
 
 | Method | Path | Body / result |
 | --- | --- | --- |
@@ -57,23 +57,21 @@ All endpoints require `Authorization: Bearer <api_token>`. JSON mutation bodies 
 | PUT | `/api/settings` | Body: `{"mode":"episode"}` or `{"mode":"season"}`; returns saved settings |
 | GET | `/api/shows` | Array of `{id,title,excluded,active}`, sorted by title |
 | PUT | `/api/shows/{id}/exclusion` | Body: `{"excluded":true}` or `false`; 204, or 404 for unknown show |
-| GET | `/api/notifications?limit=50&offset=0` | History/plans, newest due time first; limit clamped to 1–100 |
+| GET | `/api/notifications?limit=50&offset=0` | All history/plans, newest due time first; limit clamped to 1–100 |
+| GET | `/api/notifications?view=upcoming` | Pending plans for the selected mode and active, non-excluded shows; earliest due time first |
+| GET | `/api/notifications?view=history` | Non-pending attempts, newest due time first; accepts `limit` and `offset` |
 | GET | `/api/health` | Worker scan/delivery times, webhook state, tracking start, unresolved delivery count |
 | POST | `/api/webhook/resume` | Reenable a repaired webhook; 204 |
 
-Timestamps are Unix seconds in UTC. Notification states are `pending`, `sending`, `sent`, `uncertain`, `failed`, and `covered`. `pending` may be held by the selected mode, exclusions, or webhook backoff; it is not a promise of immediate delivery. Health returns 200 if the API/database work; inspect `last_scan_succeeded` and `last_scan_at` to assess Sonarr health. Invalid tokens return 401, malformed/unknown fields or modes are rejected, and internal error details stay in stderr.
+Notifications include `key`, `series_id`, `mode`, `season`, `content` (plain text), `due_at`, `state`, `attempted_at`, and `sent_at`. Timestamps are Unix seconds in UTC. Notification states are `pending`, `sending`, `sent`, `uncertain`, `failed`, and `covered`. `pending` may be held by the selected mode, exclusions, or webhook backoff; it is not a promise of immediate delivery. Health returns 200 if the API/database work; inspect `last_scan_succeeded` and `last_scan_at` to assess Sonarr health. Malformed/unknown fields, modes, and activity views are rejected, and internal error details stay in stderr.
 
 Settings/exclusion mutations are serialized with an in-flight Discord request. Once a successful mutation response is returned, the new policy applies to subsequent sends; a message already in flight cannot be recalled. The route may wait for that bounded request to finish.
 
 ```sh
-export JELLY_ALERT_TOKEN='your-private-api-token'
-curl -H "Authorization: Bearer $JELLY_ALERT_TOKEN" \
-  http://127.0.0.1:8090/api/shows
-curl -X PUT -H "Authorization: Bearer $JELLY_ALERT_TOKEN" \
-  -H 'Content-Type: application/json' -d '{"mode":"season"}' \
+curl http://127.0.0.1:8090/api/shows
+curl -X PUT -H 'Content-Type: application/json' -d '{"mode":"season"}' \
   http://127.0.0.1:8090/api/settings
-curl -X PUT -H "Authorization: Bearer $JELLY_ALERT_TOKEN" \
-  -H 'Content-Type: application/json' -d '{"excluded":true}' \
+curl -X PUT -H 'Content-Type: application/json' -d '{"excluded":true}' \
   http://127.0.0.1:8090/api/shows/123/exclusion
 ```
 
@@ -87,7 +85,7 @@ cargo test --all-targets
 cargo build --release
 ```
 
-Integration tests bind local loopback sockets, use temporary SQLite files, and do not contact real Sonarr/Discord services. They cover scheduling rules, UTC conversion, migration/restart persistence, concurrent reservations, mode switching, exclusions, rate limiting, downloaded/rescheduled episodes, Sonarr outages, ambiguous deliveries, API authentication, and shutdown.
+Integration tests bind local loopback sockets, use temporary SQLite files, and do not contact real Sonarr/Discord services. They cover scheduling rules, UTC conversion, migration/restart persistence, concurrent reservations, mode switching, exclusions, rate limiting, downloaded/rescheduled episodes, Sonarr outages, ambiguous deliveries, unauthenticated API access, activity filtering, and shutdown.
 
 ## API references
 

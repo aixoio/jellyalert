@@ -1,2 +1,29 @@
 @import "tailwindcss";
 @plugin "daisyui";
+
+/* Layout only. All component colors, typography and states come from DaisyUI. */
+.shell { max-width: 1240px; margin-inline: auto; padding: 1.5rem; }
+.app-header, .section-heading, .toolbar, .actions, .brand { display: flex; align-items: center; gap: 1rem; }
+.app-header, .section-heading { justify-content: space-between; }
+.app-header { padding-block: .5rem 1.5rem; flex-wrap: wrap; }
+.brand-mark { width: 2.5rem; height: 2.5rem; }
+.page-stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
+.page-stack > *, .dashboard > * { min-width: 0; }
+.dashboard { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); gap: 1.5rem; align-items: start; }
+.section-heading { flex-wrap: wrap; }
+.toolbar { flex-wrap: wrap; }
+.toolbar .input { flex: 1; min-width: 180px; }
+.scroll-region { min-width: 0; overflow-x: auto; }
+.mode-options { display: grid; gap: 1rem; }
+.mode-option { display: flex; align-items: start; gap: 1rem; cursor: pointer; }
+.mode-option .radio { flex-shrink: 0; margin-top: .2rem; }
+.mode-copy { display: grid; gap: .3rem; }
+.status-list { display: grid; gap: 1rem; }
+.status-list > div { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.status-list dd { text-align: right; }
+.empty-state { text-align: center; padding: 2.5rem 1rem; display: grid; gap: .75rem; justify-items: center; }
+.delivery-copy { max-width: 36rem; white-space: normal; overflow-wrap: anywhere; }
+.show-name { white-space: normal; overflow-wrap: anywhere; min-width: 10rem; }
+.page-footer { padding-block: 1.5rem; display: flex; gap: 1rem; justify-content: space-between; flex-wrap: wrap; }
+.notice { margin-bottom: 1.5rem; }
+@media (max-width: 800px) { .dashboard { grid-template-columns: minmax(0, 1fr); } .shell { padding: 1rem; } }

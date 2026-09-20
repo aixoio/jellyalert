@@ -153,6 +153,14 @@ async fn health(State(state): State<ApiState>) -> ApiResult<HealthResponse> {
 struct Page {
     limit: Option<u32>,
     offset: Option<u32>,
+    view: Option<NotificationView>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NotificationView {
+    Upcoming,
+    History,
 }
 
 #[derive(Serialize)]
@@ -197,8 +205,22 @@ async fn notifications(
     State(state): State<ApiState>,
     Query(page): Query<Page>,
 ) -> ApiResult<Vec<Notification>> {
-    let rows = sqlx::query("SELECT key, series_id, mode, due_at, season, content, state, attempted_at, sent_at FROM notifications ORDER BY due_at DESC, key LIMIT ? OFFSET ?")
-        .bind(page.limit.unwrap_or(50).clamp(1, 100)).bind(page.offset.unwrap_or(0)).fetch_all(state.service.db.pool()).await?;
+    let query = match page.view {
+        Some(NotificationView::Upcoming) => {
+            "SELECT n.key, n.series_id, n.mode, n.due_at, n.season, n.content, n.state, n.attempted_at, n.sent_at FROM notifications n JOIN shows s ON s.id = n.series_id WHERE n.state = 'pending' AND n.mode = (SELECT mode FROM settings WHERE id = 1) AND s.active = 1 AND s.excluded = 0 ORDER BY n.due_at ASC, n.key LIMIT ? OFFSET ?"
+        }
+        Some(NotificationView::History) => {
+            "SELECT key, series_id, mode, due_at, season, content, state, attempted_at, sent_at FROM notifications WHERE state <> 'pending' ORDER BY due_at DESC, key LIMIT ? OFFSET ?"
+        }
+        None => {
+            "SELECT key, series_id, mode, due_at, season, content, state, attempted_at, sent_at FROM notifications ORDER BY due_at DESC, key LIMIT ? OFFSET ?"
+        }
+    };
+    let rows = sqlx::query(query)
+        .bind(page.limit.unwrap_or(50).clamp(1, 100))
+        .bind(page.offset.unwrap_or(0))
+        .fetch_all(state.service.db.pool())
+        .await?;
     let notifications = rows
         .iter()
         .map(|row| {

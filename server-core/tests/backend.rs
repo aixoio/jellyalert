@@ -613,3 +613,79 @@ async fn workers_stop_promptly_when_idle() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn activity_views_filter_policy_paginate_and_include_message_details() {
+    let fixture = TestDb::new().await;
+    let mock = mock_server().await;
+    let db = &fixture.db;
+    db.sync_shows(&[(1, "Test Show".into())]).await.unwrap();
+    let mut finale = episode(2, 2, 200);
+    finale.finale_type = Some(FinaleType::Season);
+    let plans = plan(&series(), &[episode(1, 1, 100), finale], 0);
+    db.replace_plans(1, &plans).await.unwrap();
+    let router = api::router(service(db.clone(), &mock));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = reqwest::Client::new();
+    let get_page = |query: &'static str| {
+        let client = client.clone();
+        let url = format!("{base}/api/notifications?{query}");
+        async move {
+            let response = client.get(url).send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            serde_json::from_slice::<Vec<Value>>(&response.bytes().await.unwrap()).unwrap()
+        }
+    };
+    let upcoming = get_page("view=upcoming").await;
+    assert_eq!(upcoming.len(), 2);
+    assert_eq!(upcoming[0]["due_at"], 100);
+    assert_eq!(upcoming[1]["due_at"], 200);
+    assert_eq!(upcoming[0]["season"], 1);
+    assert!(
+        upcoming[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Test Show")
+    );
+    assert_eq!(
+        get_page("view=upcoming&limit=1&offset=1").await[0],
+        upcoming[1]
+    );
+    assert!(get_page("view=history").await.is_empty());
+    db.set_mode(NotificationMode::Season).await.unwrap();
+    let seasons = get_page("view=upcoming").await;
+    assert_eq!(seasons.len(), 1);
+    assert_eq!(seasons[0]["mode"], "season");
+    db.set_excluded(1, true).await.unwrap();
+    assert!(get_page("view=upcoming").await.is_empty());
+    db.set_excluded(1, false).await.unwrap();
+    db.sync_shows(&[]).await.unwrap();
+    assert!(get_page("view=upcoming").await.is_empty());
+    db.sync_shows(&[(1, "Test Show".into())]).await.unwrap();
+    db.set_mode(NotificationMode::Episode).await.unwrap();
+    let first = plans
+        .iter()
+        .find(|item| item.episode_id == Some(1))
+        .unwrap();
+    assert!(db.claim(first, 100).await.unwrap());
+    db.finish(&first.key, DeliveryState::Sent, 101)
+        .await
+        .unwrap();
+    assert_eq!(get_page("view=upcoming").await.len(), 1);
+    let history = get_page("view=history").await;
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0]["state"], "sent");
+    assert_eq!(history[0]["sent_at"], 101);
+    assert_eq!(
+        client
+            .get(format!("{base}/api/notifications?view=invalid"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    task.abort();
+}
