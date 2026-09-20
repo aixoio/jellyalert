@@ -4,11 +4,11 @@ import { pathToFileURL } from 'node:url';
 export function mockCore() {
 	const now = Math.floor(Date.now() / 1000);
 	const state = {
-		mode: 'episode',
 		paused: true,
 		requests: [],
 		shows: Array.from({ length: 26 }, (_, index) => ({
 			id: index + 1,
+			mode: 'episode',
 			title: index === 0 ? 'The Last Lighthouse' : `Test show ${String(index + 1).padStart(2, '0')}`,
 			excluded: index === 1,
 			active: index !== 25
@@ -23,14 +23,15 @@ export function mockCore() {
 		};
 		let body = '';
 		for await (const chunk of request) body += chunk;
-		if (url.pathname === '/api/settings') {
-			if (request.method === 'PUT') {
-				const input = JSON.parse(body);
-				if (!['episode', 'season'].includes(input.mode)) return send(422, { error: 'Invalid mode.' });
-				state.mode = input.mode;
-			}
-			return send(200, { mode: state.mode });
-		}
+        const modeRoute = url.pathname.match(/^\/api\/shows\/(\d+)\/mode$/);
+        if (modeRoute && request.method === 'PUT') {
+            const show = state.shows.find((show) => show.id === Number(modeRoute[1]));
+            if (!show) return send(404, { error: 'Show not found.' });
+            const input = JSON.parse(body);
+            if (!['episode', 'season'].includes(input.mode)) return send(422, { error: 'Invalid mode.' });
+            show.mode = input.mode;
+            return send(204);
+        }
 		if (url.pathname === '/api/shows') return send(200, state.shows);
 		const exclusion = url.pathname.match(/^\/api\/shows\/(\d+)\/exclusion$/);
 		if (exclusion) {
@@ -47,7 +48,7 @@ export function mockCore() {
 		if (url.pathname === '/api/notifications') {
 			const history = url.searchParams.get('view') === 'history';
 			const items = Array.from({ length: history ? 3 : 24 }, (_, index) => ({
-				key: `episode:${index + 1}`, series_id: 1, mode: state.mode, season: 2,
+				key: `episode:${index + 1}`, series_id: 1, mode: state.shows[0].mode, season: 2,
 				content: `The Last Lighthouse — Season 2, episode ${index + 1} has reached its air time. Check for downloads.`,
 				due_at: now + (history ? -1 : 1) * (index + 1) * 3600,
 				state: history ? ['sent', 'uncertain', 'failed'][index] : 'pending',

@@ -6,9 +6,9 @@ import type { RequestHandler } from './$types';
 const proxy: RequestHandler = async ({ params, request, url, fetch }) => {
 	const path = params.path;
 	const allowed = request.method === 'GET'
-		? ['health', 'settings', 'shows', 'notifications'].includes(path)
+		? ['health', 'shows', 'notifications'].includes(path)
 		: request.method === 'PUT'
-			? path === 'settings' || /^shows\/[1-9]\d*\/exclusion$/.test(path)
+			? /^shows\/[1-9]\d*\/(exclusion|mode)$/.test(path)
 			: request.method === 'POST' && path === 'webhook/resume';
 	if (!allowed) return json({ error: 'Unknown API endpoint.' }, { status: 404 });
 	if (request.method !== 'GET' && request.headers.get('origin') !== url.origin) {

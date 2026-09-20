@@ -1,7 +1,6 @@
 export type Mode = 'episode' | 'season';
 export type DeliveryState = 'pending' | 'sending' | 'sent' | 'uncertain' | 'failed' | 'covered';
-export interface Settings { mode: Mode }
-export interface Show { id: number; title: string; excluded: boolean; active: boolean }
+export interface Show { id: number; title: string; excluded: boolean; active: boolean; mode: Mode }
 export interface Health {
 	worker: { last_scan_at: number | null; last_scan_succeeded: boolean; last_delivery_at: number | null };
 	webhook_disabled: boolean;

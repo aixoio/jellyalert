@@ -1,14 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, errorMessage, type Health, type Mode, type Notification, type Settings, type Show, type DeliveryState } from '$lib/api';
+	import { api, errorMessage, type Health, type Notification, type Show, type DeliveryState } from '$lib/api';
 	import Time from '$lib/Time.svelte';
 
-	let settings = $state<Settings | null>(null);
 	let health = $state<Health | null>(null);
 	let shows = $state<Show[]>([]);
 	let notifications = $state<Notification[]>([]);
-	let draftMode = $state<Mode>('episode');
-	let dirty = $state(false);
 	let loading = $state(true);
 	let refreshing = $state(false);
 	let busy = $state('');
@@ -43,19 +40,17 @@
 		if (refreshing || busy) return;
 		refreshing = true;
 		try {
-			const [nextSettings, nextHealth, nextShows, nextNotifications] = await Promise.all([
-				api<Settings>('settings'), api<Health>('health'), api<Show[]>('shows'),
+			const [nextHealth, nextShows, nextNotifications] = await Promise.all([
+				api<Health>('health'), api<Show[]>('shows'),
 				api<Notification[]>(`notifications?limit=${pageSize + 1}&offset=${pageOffset}&view=${view}`)
 			]);
 			if (!alive) return;
-			settings = nextSettings;
 			health = nextHealth;
 			shows = nextShows;
 			notifications = nextNotifications.slice(0, pageSize);
 			hasNext = nextNotifications.length > pageSize;
 			offset = pageOffset;
 			activityView = view;
-			if (!dirty) draftMode = nextSettings.mode;
 			updatedAt = Math.floor(Date.now() / 1000);
 			error = '';
 		} catch (cause) {
@@ -65,21 +60,21 @@
 		}
 	}
 
-	async function change(name: string, path: string, method: 'PUT' | 'POST', body: unknown, success: string) {
+	async function change(name: string, path: string, method: 'PUT' | 'POST', body: unknown, success: string, saved?: () => void) {
 		if (locked) return;
 		busy = name;
 		feedback = '';
 		error = '';
 		try {
 			await api<void>(path, { method, body: body === undefined ? undefined : JSON.stringify(body) });
-			if (name === 'mode') { settings = { mode: draftMode }; dirty = false; }
 			if (name.startsWith('show:')) {
 				const id = Number(name.slice(5));
 				shows = shows.map((show) => show.id === id ? { ...show, excluded: !show.excluded } : show);
 			}
+			saved?.();
 			feedback = success;
 			busy = '';
-			await refresh();
+			await refresh(0);
 		} catch (cause) {
 			error = `${errorMessage(cause)} Refresh to confirm the current setting before retrying.`;
 		} finally { busy = ''; }
@@ -107,7 +102,7 @@
 			<div><h1 class="card-title">Jelly Alert</h1><p>Notification control</p></div>
 		</div>
 		<nav aria-label="Main navigation" class="join">
-			<a class="btn btn-ghost join-item" href="#settings">Settings</a>
+			<a class="btn btn-ghost join-item" href="#status">Status</a>
 			<a class="btn btn-ghost join-item" href="#shows">Shows</a>
 			<a class="btn btn-ghost join-item" href="#activity">Activity</a>
 		</nav>
@@ -129,29 +124,22 @@
 
 	{#if loading}
 		<div class="empty-state" role="status"><span class="loading loading-spinner loading-lg"></span><p>Connecting to Server Core…</p></div>
-	{:else if settings && health}
+	{:else if health}
 		<main class="page-stack">
 			<div class="dashboard">
-				<section id="settings" class="card card-border">
-					<div class="card-body">
-						<div class="section-heading"><h2 class="card-title">When should we notify you?</h2><span class="badge badge-outline">Discord</span></div>
-						<p>Choose how missing episodes become notifications.</p>
-						<form onsubmit={(event) => { event.preventDefault(); void change('mode', 'settings', 'PUT', { mode: draftMode }, 'Notification preference saved.'); }}>
-							<fieldset class="fieldset" disabled={locked}>
-								<legend class="fieldset-legend">Notification frequency</legend>
-								<div class="mode-options">
-									<label class="mode-option"><input class="radio radio-primary" type="radio" name="mode" value="episode" bind:group={draftMode} onchange={() => dirty = true} /><span class="mode-copy"><strong>Every episode</strong><span>One alert at each episode’s air time, if it is missing from your library.</span></span></label>
-									<label class="mode-option"><input class="radio radio-primary" type="radio" name="mode" value="season" bind:group={draftMode} onchange={() => dirty = true} /><span class="mode-copy"><strong>Full seasons</strong><span>One alert once the complete season has aired, if episodes are missing. Season completion must be confirmed by Sonarr.</span></span></label>
-								</div>
-							</fieldset>
-							<div class="divider"></div>
-							<div class="actions"><button class="btn btn-primary" type="submit" disabled={locked || draftMode === settings.mode}>{busy === 'mode' ? 'Saving…' : 'Save preference'}</button>{#if draftMode !== settings.mode}<span class="badge badge-warning badge-soft">Unsaved change</span>{:else}<span class="badge badge-ghost">Saved</span>{/if}</div>
-						</form>
-						<p>Air times come from Sonarr. An alert means the air time has passed; it does not confirm a download is available.</p>
-					</div>
-				</section>
+                <section class="card card-border">
+                    <div class="card-body">
+                        <h2 class="card-title">Your shows, your schedule</h2>
+                        <p>Choose every episode or full seasons for each show below. Changes save immediately and only affect that show.</p>
+                        <p><strong>Every episode:</strong> an alert at each missing episode’s air time.</p>
+                        <p><strong>Full seasons:</strong> one alert when the complete season has aired and episodes are missing. Sonarr must confirm season completion.</p>
+                        <p>New shows start with episode alerts. Turn tracking off to exclude a show entirely.</p>
+                        <p>Air times come from Sonarr and do not confirm that a download is available.</p>
+                        <div class="card-actions"><a class="btn btn-primary" href="#shows">Manage show notifications</a></div>
+                    </div>
+                </section>
 
-				<aside class="card card-border" aria-labelledby="status-heading">
+				<aside id="status" class="card card-border" aria-labelledby="status-heading">
 					<div class="card-body">
 						<div class="section-heading"><h2 id="status-heading" class="card-title">Service status</h2><span class="badge" class:badge-success={!error} class:badge-warning={!!error}>{error ? 'Stale' : 'Connected'}</span></div>
 						<dl class="status-list">
@@ -178,7 +166,23 @@
 					</div>
 					{#if visibleShows.length}
 						<div class="scroll-region"><table class="table"><thead><tr><th scope="col">Show</th><th scope="col">Track</th></tr></thead><tbody>
-							{#each pagedShows as show (show.id)}<tr><td class="show-name"><strong>{show.title}</strong><p><span class="badge" class:badge-ghost={!show.active || show.excluded} class:badge-success={show.active && !show.excluded} class:badge-soft={show.active && !show.excluded}>{!show.active ? 'Removed' : show.excluded ? 'Excluded' : 'Tracked'}</span></p></td><td><input type="checkbox" class="toggle toggle-primary" aria-label={`Track ${show.title}`} checked={!show.excluded} disabled={locked || !show.active} onchange={(event) => { event.currentTarget.checked = !show.excluded; void change(`show:${show.id}`, `shows/${show.id}/exclusion`, 'PUT', { excluded: !show.excluded }, `${show.title} ${show.excluded ? 'is now tracked' : 'is now excluded'}.`); }} /></td></tr>{/each}
+							{#each pagedShows as show (show.id)}<tr><td class="show-name"><strong>{show.title}</strong><p><span class="badge" class:badge-ghost={!show.active || show.excluded} class:badge-success={show.active && !show.excluded} class:badge-soft={show.active && !show.excluded}>{!show.active ? 'Removed' : show.excluded ? 'Excluded' : 'Tracked'}</span></p>
+                                <label class="fieldset">
+                                    <span class="fieldset-legend">Notify me</span>
+                                    <select class="select select-sm" aria-label={`Notification mode for ${show.title}`} value={show.mode} disabled={locked || !show.active}
+                                        onchange={(event) => {
+                                            const mode = event.currentTarget.value;
+                                            event.currentTarget.value = show.mode;
+                                            if (mode !== 'episode' && mode !== 'season') return;
+                                            void change(`mode:${show.id}`, `shows/${show.id}/mode`, 'PUT', { mode }, `${show.title}: ${mode === 'episode' ? 'every episode' : 'full seasons'} saved.`, () => {
+                                                shows = shows.map((item) => item.id === show.id ? { ...item, mode } : item);
+                                            });
+                                        }}>
+                                        <option value="episode">Every episode</option>
+                                        <option value="season">Full seasons</option>
+                                    </select>
+                                </label>
+                            </td><td><input type="checkbox" class="toggle toggle-primary" aria-label={`Track ${show.title}`} checked={!show.excluded} disabled={locked || !show.active} onchange={(event) => { event.currentTarget.checked = !show.excluded; void change(`show:${show.id}`, `shows/${show.id}/exclusion`, 'PUT', { excluded: !show.excluded }, `${show.title} ${show.excluded ? 'is now tracked' : 'is now excluded'}.`); }} /></td></tr>{/each}
 						</tbody></table></div>
 					{:else}<div class="empty-state"><h3 class="card-title">{shows.length ? 'No matching shows' : 'Your shows will appear here'}</h3><p>{shows.length ? 'Try another search or filter.' : 'Add and monitor shows in Sonarr. Jelly Alert imports them on its next scan.'}</p>{#if query || filter !== 'active'}<button class="btn btn-ghost btn-sm" onclick={() => { query = ''; filter = 'active'; }}>Clear filters</button>{/if}</div>{/if}
 					<div class="section-heading"><span>{visibleShows.length ? `Showing ${showPage * 12 + 1}–${Math.min((showPage + 1) * 12, visibleShows.length)} of ${visibleShows.length}` : 'No shows'}</span><div class="join"><button class="btn btn-sm join-item" disabled={showPage === 0} onclick={() => showPage--} aria-label="Previous shows">Previous</button><button class="btn btn-sm join-item" disabled={(showPage + 1) * 12 >= visibleShows.length} onclick={() => showPage++} aria-label="Next shows">Next</button></div></div>
@@ -188,7 +192,7 @@
 
 			<section id="activity" class="card card-border">
 				<div class="card-body">
-					<div class="section-heading"><div><h2 class="card-title">Notification activity</h2><p>{activityView === 'upcoming' ? 'Eligible alerts for your current preference, with the next air time first.' : 'Past delivery attempts, with the latest air time first.'}</p></div><span class="badge badge-outline">Your local time</span></div>
+					<div class="section-heading"><div><h2 class="card-title">Notification activity</h2><p>{activityView === 'upcoming' ? 'Eligible alerts for each show’s preference, with the next air time first.' : 'Past delivery attempts, with the latest air time first.'}</p></div><span class="badge badge-outline">Your local time</span></div>
 					<div class="join" aria-label="Activity view"><button class="btn btn-sm join-item" class:btn-active={activityView === 'upcoming'} aria-pressed={activityView === 'upcoming'} disabled={locked} onclick={() => refresh(0, 'upcoming')}>Upcoming</button><button class="btn btn-sm join-item" class:btn-active={activityView === 'history'} aria-pressed={activityView === 'history'} disabled={locked} onclick={() => refresh(0, 'history')}>Delivery history</button></div>
 					{#if notifications.length}<div class="scroll-region"><table class="table"><thead><tr><th scope="col">Notification</th><th scope="col">Air time</th><th scope="col">Delivery</th></tr></thead><tbody>
 						{#each notifications as notification (notification.key)}<tr><td class="delivery-copy"><strong>{shows.find((show) => show.id === notification.series_id)?.title ?? `Show ${notification.series_id}`}</strong><p>{notification.mode === 'season' ? 'Full season' : 'Episode'} · Season {notification.season}</p><details class="collapse collapse-arrow"><summary class="collapse-title">Message details</summary><div class="collapse-content"><p>{notification.content}</p>{#if notification.state === 'uncertain' || notification.state === 'sending'}<p>Delivery could not be confirmed. This attempt will not be repeated to prevent duplicate notifications.</p>{/if}{#if notification.state === 'failed'}<p>Discord rejected this notification. Check Server Core’s logs for details.</p>{/if}{#if notification.state === 'covered'}<p>These episodes were already covered by an earlier notification.</p>{/if}</div></details></td><td><Time value={notification.due_at} /></td><td><span class={`badge ${stateClasses[notification.state]}`}>{stateLabels[notification.state]}</span>{#if notification.sent_at}<p><Time value={notification.sent_at} /></p>{:else if notification.attempted_at}<p><Time value={notification.attempted_at} /></p>{/if}</td></tr>{/each}

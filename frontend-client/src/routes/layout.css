@@ -14,10 +14,6 @@
 .toolbar { flex-wrap: wrap; }
 .toolbar .input { flex: 1; min-width: 180px; }
 .scroll-region { min-width: 0; overflow-x: auto; }
-.mode-options { display: grid; gap: 1rem; }
-.mode-option { display: flex; align-items: start; gap: 1rem; cursor: pointer; }
-.mode-option .radio { flex-shrink: 0; margin-top: .2rem; }
-.mode-copy { display: grid; gap: .3rem; }
 .status-list { display: grid; gap: 1rem; }
 .status-list > div { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 .status-list dd { text-align: right; }

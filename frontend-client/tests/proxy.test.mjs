@@ -30,7 +30,7 @@ test('same-origin client bridge forwards API controls and handles failures', { t
 	});
 	let ready = false;
 	for (let attempt = 0; attempt < 100; attempt++) {
-		try { ready = (await fetch(`${base}/api/settings`)).ok; } catch { /* Vite is starting. */ }
+		try { ready = (await fetch(`${base}/api/shows`)).ok; } catch { /* Vite is starting. */ }
 		if (ready) break;
 		if (vite.exitCode !== null) throw new Error(log);
 		await new Promise((resolve) => setTimeout(resolve, 100));
@@ -39,16 +39,19 @@ test('same-origin client bridge forwards API controls and handles failures', { t
 	const put = (path, body, origin = base) => fetch(`${base}/api/${path}`, {
 		method: 'PUT', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(body)
 	});
-	assert.deepEqual(await (await fetch(`${base}/api/settings`)).json(), { mode: 'episode' });
-	assert.equal((await put('settings', { mode: 'season' })).status, 200);
-	assert.equal(mock.state.mode, 'season');
+	assert.equal((await (await fetch(`${base}/api/shows`)).json())[0].mode, 'episode');
+	assert.equal((await put('shows/1/mode', { mode: 'season' })).status, 204);
+	assert.equal(mock.state.shows[0].mode, 'season');
+	assert.equal(mock.state.shows[1].mode, 'episode');
 	assert.equal((await put('shows/1/exclusion', { excluded: true })).status, 204);
 	assert.equal(mock.state.shows[0].excluded, true);
 	assert.equal((await put('shows/999/exclusion', { excluded: true })).status, 404);
-	assert.equal((await put('settings', { mode: 'invalid' })).status, 422);
-	assert.equal((await put('settings', { mode: 'episode' }, 'https://other.example')).status, 403);
-	assert.equal(mock.state.mode, 'season');
+	assert.equal((await put('shows/1/mode', { mode: 'invalid' })).status, 422);
+	assert.equal((await put('shows/1/mode', { mode: 'episode' }, 'https://other.example')).status, 403);
+	assert.equal(mock.state.shows[0].mode, 'season');
 	assert.equal((await fetch(`${base}/api/arbitrary-endpoint`)).status, 404);
+	assert.equal((await put('settings', { mode: 'season' })).status, 404);
+	assert.equal((await put('shows/999/mode', { mode: 'season' })).status, 404);
 	const page = await fetch(`${base}/api/notifications?view=upcoming&limit=3&offset=2`);
 	assert.equal(page.headers.get('cache-control'), 'no-store');
 	assert.equal((await page.json()).length, 3);

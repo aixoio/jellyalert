@@ -16,9 +16,8 @@ The backend no longer requires `api_token`; older config files containing that f
 
 ## Controls
 
-- **Settings:** choose episode or full-season alerts, then save. Unsubmitted edits survive automatic refreshes.
-- **Shows:** search, filter, paginate, and toggle tracking. Changes save immediately. Excluded shows never create new Discord delivery attempts; prior history remains.
-- **Activity:** upcoming alerts show only the current mode and active, non-excluded shows, ordered by the next air time. Delivery history includes sent, failed, unconfirmed, recorded, and already-covered attempts. Expand a message to read its plain text.
+- **Shows:** search, filter, paginate, toggle tracking, and choose **Every episode** or **Full seasons** independently for each show. Choices save immediately and do not change other shows. New shows default to episode alerts; existing shows retain their previous global preference after migration. Excluded shows never create new Discord delivery attempts; prior history remains.
+- **Activity:** upcoming alerts show only each show’s mode and active, non-excluded shows, ordered by the next air time. Delivery history includes sent, failed, unconfirmed, recorded, and already-covered attempts. Expand a message to read its plain text.
 - **Status:** Sonarr scan health, Discord readiness/backoff, last attempt, tracking start, and unresolved attempts. When a webhook is disabled, repair the backend configuration and restart it, then use **Resume notifications**.
 
 Times use the browser's local time zone. Data refreshes every 30 seconds while the page is visible, with no overlapping refreshes. Mutations disable competing controls until they finish. Failed refreshes retain previous data and display a stale-data notice. The client does not poll Sonarr directly or schedule notifications.
