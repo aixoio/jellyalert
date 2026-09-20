@@ -52,6 +52,12 @@ test('same-origin client bridge forwards API controls and handles failures', { t
 	assert.equal((await fetch(`${base}/api/arbitrary-endpoint`)).status, 404);
 	assert.equal((await put('settings', { mode: 'season' })).status, 404);
 	assert.equal((await put('shows/999/mode', { mode: 'season' })).status, 404);
+	const poster = await fetch(`${base}/api/shows/1/poster`);
+	assert.equal(poster.status, 200);
+	assert.equal(poster.headers.get('content-type'), 'image/jpeg');
+	assert.equal(poster.headers.get('cache-control'), 'private, max-age=86400');
+	assert.deepEqual(new Uint8Array(await poster.arrayBuffer()), new Uint8Array([255, 216, 255, 217]));
+	assert.equal((await fetch(`${base}/api/shows/2/poster`)).headers.get('cache-control'), 'no-store');
 	const page = await fetch(`${base}/api/notifications?view=upcoming&limit=3&offset=2`);
 	assert.equal(page.headers.get('cache-control'), 'no-store');
 	assert.equal((await page.json()).length, 3);

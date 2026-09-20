@@ -32,6 +32,10 @@ export function mockCore() {
             show.mode = input.mode;
             return send(204);
         }
+		if (url.pathname === '/api/shows/1/poster') {
+			response.writeHead(200, { 'content-type': 'image/jpeg' });
+			return response.end(Buffer.from([255, 216, 255, 217]));
+		}
 		if (url.pathname === '/api/shows') return send(200, state.shows);
 		const exclusion = url.pathname.match(/^\/api\/shows\/(\d+)\/exclusion$/);
 		if (exclusion) {

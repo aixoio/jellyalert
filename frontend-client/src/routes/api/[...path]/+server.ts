@@ -6,7 +6,7 @@ import type { RequestHandler } from './$types';
 const proxy: RequestHandler = async ({ params, request, url, fetch }) => {
 	const path = params.path;
 	const allowed = request.method === 'GET'
-		? ['health', 'shows', 'notifications'].includes(path)
+		? (['health', 'shows', 'notifications'].includes(path) || /^shows\/[1-9]\d*\/poster$/.test(path))
 		: request.method === 'PUT'
 			? /^shows\/[1-9]\d*\/(exclusion|mode)$/.test(path)
 			: request.method === 'POST' && path === 'webhook/resume';
@@ -26,7 +26,7 @@ const proxy: RequestHandler = async ({ params, request, url, fetch }) => {
 		});
 		return new Response(response.body, {
 			status: response.status,
-			headers: { 'content-type': response.headers.get('content-type') || 'application/json', 'cache-control': 'no-store' }
+			headers: { 'content-type': response.headers.get('content-type') || 'application/json', 'cache-control': path.endsWith('/poster') && response.ok ? 'private, max-age=86400' : 'no-store', 'x-content-type-options': 'nosniff' }
 		});
 	} catch {
 		return json({ error: 'Cannot reach Server Core. Check that it is running, then retry.' }, { status: 502 });

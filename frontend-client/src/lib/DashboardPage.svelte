@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api, errorMessage, type Health, type Notification, type Show, type DeliveryState } from '$lib/api';
 	import Time from '$lib/Time.svelte';
+	import ShowPoster from '$lib/ShowPoster.svelte';
 
 	let { section }: { section: 'overview' | 'shows' | 'activity' } = $props();
 	const titles = { overview: 'Overview', shows: 'Shows', activity: 'Activity' };
@@ -168,6 +169,7 @@
 						<div class="shows-grid">
                             {#each pagedShows as show (show.id)}
                                 <article class="card card-border show-card" aria-label={show.title}>
+                                    <ShowPoster id={show.id} />
                                     <div class="card-body">
                                         <div class="section-heading"><span class="badge" class:badge-ghost={!show.active || show.excluded} class:badge-success={show.active && !show.excluded} class:badge-soft={show.active && !show.excluded}>{!show.active ? 'Removed from Sonarr' : show.excluded ? 'Excluded' : 'Tracked'}</span>{#if busy === `show:${show.id}` || busy === `mode:${show.id}`}<span class="loading loading-spinner loading-xs" aria-label="Saving"></span>{/if}</div>
                                         <h2 class="card-title show-name">{show.title}</h2>
@@ -199,13 +201,33 @@
 
             {/if}
             {#if section === 'activity'}
-			<section id="activity" class="card card-border">
-				<div class="card-body">
+			<section id="activity" class="page-stack">
+				<div class="page-stack">
 					<div class="section-heading"><div><h2 class="card-title">Notification activity</h2><p>{activityView === 'upcoming' ? 'Eligible alerts for each show’s preference, with the next air time first.' : 'Past delivery attempts, with the latest air time first.'}</p></div><span class="badge badge-outline">Your local time</span></div>
 					<div class="tabs tabs-box" aria-label="Activity view"><button class="tab" class:tab-active={activityView === 'upcoming'} aria-pressed={activityView === 'upcoming'} disabled={locked} onclick={() => refresh(0, 'upcoming')}>Upcoming</button><button class="tab" class:tab-active={activityView === 'history'} aria-pressed={activityView === 'history'} disabled={locked} onclick={() => refresh(0, 'history')}>Delivery history</button></div>
-					{#if notifications.length}<div class="scroll-region"><table class="table"><thead><tr><th scope="col">Notification</th><th scope="col">Air time</th><th scope="col">Delivery</th></tr></thead><tbody>
-						{#each notifications as notification (notification.key)}<tr><td class="delivery-copy"><strong>{shows.find((show) => show.id === notification.series_id)?.title ?? `Show ${notification.series_id}`}</strong><p>{notification.mode === 'season' ? 'Full season' : 'Episode'} · Season {notification.season}</p><details class="collapse collapse-arrow"><summary class="collapse-title">Message details</summary><div class="collapse-content"><p>{notification.content}</p>{#if notification.state === 'uncertain' || notification.state === 'sending'}<p>Delivery could not be confirmed. This attempt will not be repeated to prevent duplicate notifications.</p>{/if}{#if notification.state === 'failed'}<p>Discord rejected this notification. Check Server Core’s logs for details.</p>{/if}{#if notification.state === 'covered'}<p>These episodes were already covered by an earlier notification.</p>{/if}</div></details></td><td><Time value={notification.due_at} /></td><td><span class={`badge ${stateClasses[notification.state]}`}>{stateLabels[notification.state]}</span>{#if notification.sent_at}<p><Time value={notification.sent_at} /></p>{:else if notification.attempted_at}<p><Time value={notification.attempted_at} /></p>{/if}</td></tr>{/each}
-					</tbody></table></div>{:else}<div class="empty-state"><h3 class="card-title">{offset ? 'No more notifications' : activityView === 'upcoming' ? 'Nothing scheduled yet' : 'No delivery history yet'}</h3><p>{activityView === 'upcoming' ? 'Eligible missing episodes appear after a Sonarr scan. Episodes from before tracking began are skipped.' : 'Completed delivery attempts will appear here. Each notification is sent at most once.'}</p></div>{/if}
+					{#if notifications.length}<ol class="activity-list">
+                            {#each notifications as notification (notification.key)}
+                                <li class="card card-border">
+                                    <div class="card-body">
+                                        <div class="activity-entry">
+                                            <div class="activity-copy">
+                                                <span class="badge badge-outline">{notification.mode === 'season' ? 'Full season' : 'Episode'} · Season {notification.season}</span>
+                                                <h2 class="card-title">{shows.find((show) => show.id === notification.series_id)?.title ?? `Show ${notification.series_id}`}</h2>
+                                                <div><p><strong>{activityView === 'upcoming' ? 'Discord message preview' : 'Discord message'}</strong></p><p>{notification.content}</p></div>
+                                            </div>
+                                            <dl class="activity-meta">
+                                                <div><dt>Air time</dt><dd><Time value={notification.due_at} /></dd></div>
+                                                <div><dt>Delivery status</dt><dd><span class={`badge ${stateClasses[notification.state]}`}>{stateLabels[notification.state]}</span></dd></div>
+                                                {#if notification.sent_at}<div><dt>Sent at</dt><dd><Time value={notification.sent_at} /></dd></div>{:else if notification.attempted_at}<div><dt>Attempted at</dt><dd><Time value={notification.attempted_at} /></dd></div>{/if}
+                                            </dl>
+                                        </div>
+                                        {#if notification.state === 'uncertain' || notification.state === 'sending'}<div class="alert alert-warning"><p>Delivery could not be confirmed. This attempt will not be repeated to prevent duplicate notifications.</p></div>{/if}
+                                        {#if notification.state === 'failed'}<div class="alert alert-error"><p>Discord rejected this notification. Check Server Core’s logs for details.</p></div>{/if}
+                                        {#if notification.state === 'covered'}<p>These episodes were already covered by an earlier notification.</p>{/if}
+                                    </div>
+                                </li>
+                            {/each}
+                        </ol>{:else}<div class="empty-state"><h3 class="card-title">{offset ? 'No more notifications' : activityView === 'upcoming' ? 'Nothing scheduled yet' : 'No delivery history yet'}</h3><p>{activityView === 'upcoming' ? 'Eligible missing episodes appear after a Sonarr scan. Episodes from before tracking began are skipped.' : 'Completed delivery attempts will appear here. Each notification is sent at most once.'}</p></div>{/if}
 					<div class="section-heading"><span>{notifications.length ? `Showing ${offset + 1}–${offset + notifications.length}` : 'No entries'}</span><div class="join"><button class="btn btn-sm join-item" aria-label="Previous notifications" disabled={locked || offset === 0} onclick={() => refresh(Math.max(0, offset - pageSize))}>Previous</button><button class="btn btn-sm join-item" aria-label="Next notifications" disabled={locked || !hasNext} onclick={() => refresh(offset + pageSize)}>Next</button></div></div>
 				</div>
 			</section>
