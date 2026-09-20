@@ -696,7 +696,10 @@ async fn activity_views_filter_policy_paginate_and_include_message_details() {
     db.finish(&first.key, DeliveryState::Sent, 101)
         .await
         .unwrap();
-    assert_eq!(get_page("view=upcoming").await.len(), 1);
+    // The sent episode is covered, while the second episode is still eligible.
+    let remaining = get_page("view=upcoming").await;
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0]["key"], "episode:2");
     let history = get_page("view=history").await;
     assert_eq!(history.len(), 1);
     assert_eq!(history[0]["state"], "sent");

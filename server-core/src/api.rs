@@ -230,7 +230,7 @@ async fn notifications(
 ) -> ApiResult<Vec<Notification>> {
     let query = match page.view {
         Some(NotificationView::Upcoming) => {
-            "SELECT n.key, n.series_id, n.mode, n.due_at, n.season, n.content, n.state, n.attempted_at, n.sent_at FROM notifications n JOIN shows s ON s.id = n.series_id WHERE n.state = 'pending' AND n.mode = s.mode AND s.active = 1 AND s.excluded = 0 ORDER BY n.due_at ASC, n.key LIMIT ? OFFSET ?"
+            "SELECT n.key, n.series_id, n.mode, n.due_at, n.season, n.content, n.state, n.attempted_at, n.sent_at FROM notifications n JOIN shows s ON s.id = n.series_id WHERE n.state = 'pending' AND n.mode = s.mode AND s.active = 1 AND s.excluded = 0 AND (n.episode_id IS NULL OR NOT EXISTS (SELECT 1 FROM covered_episodes c WHERE c.episode_id = n.episode_id)) ORDER BY n.due_at ASC, n.key LIMIT ? OFFSET ?"
         }
         Some(NotificationView::History) => {
             "SELECT key, series_id, mode, due_at, season, content, state, attempted_at, sent_at FROM notifications WHERE state <> 'pending' ORDER BY due_at DESC, key LIMIT ? OFFSET ?"
