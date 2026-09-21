@@ -31,13 +31,16 @@ DaisyUI supplies all component styles and its default light/dark themes (followi
 ```sh
 pnpm check
 pnpm test
+pnpm test:production
 pnpm build
 pnpm preview --host 0.0.0.0
 ```
 
+`pnpm test:production` builds and checks the Node server with LAN hosts, published ports, and an explicit HTTPS origin, including rejected cross-origin mutations.
+
 `pnpm test` uses Node's built-in test runner, a local mock backend, and an isolated Vite process. No real Discord messages are sent. Browser checks can use `node tests/mock-core.mjs`, then `SERVER_CORE_URL=http://127.0.0.1:8091 pnpm dev --port 5174`; these fixtures are never used by the normal application.
 
-Production builds use [`@sveltejs/adapter-node`](https://svelte.dev/docs/kit/adapter-node) and run with `node build` (or `pnpm start`). Set `ORIGIN` to the browser-facing URL and `SERVER_CORE_URL` to the backend URL. For a complete build with automatic restarts and persistent backend data, follow the [Docker setup](../README.md#docker-setup-recommended). `pnpm preview` is only for local previews.
+Production builds use [`@sveltejs/adapter-node`](https://svelte.dev/docs/kit/adapter-node) and run with `node build` (or `pnpm start`). Direct HTTP access accepts same-origin requests using the incoming Host header, including its port. For HTTPS reverse proxies, set `ORIGIN` to the exact browser-facing URL. Set `SERVER_CORE_URL` to the backend URL. For a complete build with automatic restarts and persistent backend data, follow the [Docker setup](../README.md#docker-setup-recommended). `pnpm preview` is only for local previews.
 
 References: [SvelteKit routing](https://svelte.dev/docs/kit/routing), [Svelte runes](https://svelte.dev/docs/svelte/what-are-runes), [DaisyUI SvelteKit setup](https://daisyui.com/docs/install/sveltekit/).
 

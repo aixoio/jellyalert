@@ -11,8 +11,14 @@ const proxy: RequestHandler = async ({ params, request, url, fetch }) => {
 			? ['settings', 'settings/reset-all', 'settings/colors'].includes(path) || /^shows\/[1-9]\d*\/(exclusion|mode)$/.test(path)
 			: request.method === 'POST' && (path === 'webhook/resume' || /^notifications\/(episode:\d+|season:\d+:\d+)\/test$/.test(path));
 	if (!allowed) return json({ error: 'Unknown API endpoint.' }, { status: 404 });
-	if (request.method !== 'GET' && request.headers.get('origin') !== url.origin) {
-		return json({ error: 'Use Jelly Alert to make this change.' }, { status: 403 });
+	// adapter-node assumes HTTPS when ORIGIN is unset, even for direct HTTP.
+	// Use the actual Host (including the published port) for our HTTP LAN default.
+	// HTTPS deployments must set ORIGIN to their browser-facing URL.
+	const expectedOrigin = env.ORIGIN
+		? new URL(env.ORIGIN).origin
+		: request.headers.get('host') ? `http://${request.headers.get('host')}` : url.origin;
+	if (request.method !== 'GET' && request.headers.get('origin') !== expectedOrigin) {
+		return json({ error: 'Request origin does not match this dashboard. If using a reverse proxy, set frontend ORIGIN to the exact browser URL and recreate the frontend container.' }, { status: 403 });
 	}
 	try {
 		const upstream = new URL(`/api/${path}`, env.SERVER_CORE_URL || 'http://127.0.0.1:8090');

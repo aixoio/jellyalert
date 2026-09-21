@@ -27,14 +27,14 @@ The browser talks only to SvelteKit. SvelteKit proxies `/api` requests to Server
 Requires Docker with Compose **2.23.1 or newer**, Sonarr, and a Discord webhook. No local Node.js or Rust installation is needed.
 
 1. Clone this repository and open `compose.yaml`.
-2. Set `sonarr_url`, `sonarr_api_key`, and `discord_webhook_url` near the bottom. Set `ORIGIN` to the exact dashboard URL you will open, such as `http://192.168.1.50:1589` for LAN access.
+2. Set `sonarr_url`, `sonarr_api_key`, and `discord_webhook_url` near the bottom.
 3. From the repository root, run:
 
 ```sh
 docker compose up -d
 ```
 
-Open [http://localhost:1589](http://localhost:1589), or your configured LAN URL. The first run compiles the SvelteKit frontend and Rust backend; subsequent starts reuse the images. The frontend runs as a production Node.js server. Docker restarts both services after crashes and host reboots while Docker is running.
+Open [http://localhost:1589](http://localhost:1589), or `http://YOUR_SERVER_IP:1589`. The first run compiles the SvelteKit frontend and Rust backend; subsequent starts reuse the images. The frontend runs as a production Node.js server. Docker restarts both services after crashes and host reboots while Docker is running.
 
 `docker-compose up -d` also works if your installation provides that command for modern Compose; legacy Compose v1 is unsupported. Omit `-d` to watch logs in the foreground (Ctrl+C stops the services).
 
@@ -47,7 +47,11 @@ docker compose up -d --build       # Rebuild after pulling source updates
 docker compose down               # Stop; keep database and settings
 ```
 
-SQLite, settings, and notification history persist in the `jellyalert-data` volume. **`docker compose down -v` deletes this data.** Keep credentials in `compose.yaml` private and do not commit your edited values. Escape literal `$` characters as `$$`. To change the dashboard port, update both `ports` and `ORIGIN`. Only the frontend is published; the backend is reached internally. The dashboard has no login and is for a trusted LAN.
+SQLite, settings, and notification history persist in the `jellyalert-data` volume. **`docker compose down -v` deletes this data.** Keep credentials in `compose.yaml` private and do not commit your edited values. Escape literal `$` characters as `$$`. To change the dashboard port, change the left side of `ports` (for example, `8080:1589`). Direct HTTP access automatically uses the requested hostname and port. Behind an HTTPS reverse proxy, set frontend `ORIGIN` to the exact browser-facing URL (for example, `https://jellyalert.example.com`). Only the frontend is published; the backend is reached internally. The dashboard has no login and is for a trusted LAN.
+
+### Troubleshooting 403 on buttons
+
+If reads work but **Send test to Discord** or settings changes return 403, check for an old `ORIGIN: http://localhost:...` in your Compose file. Remove it for direct HTTP LAN access, or set it to your exact browser URL when using a reverse proxy. Then run `docker compose up -d --build frontend`. The current frontend listens on container port `1589`; use `1589:1589` in `ports` and `PORT: "1589"` in its environment. Keep your Sonarr/Discord settings when updating Compose.
 
 ## Local development requirements
 

@@ -4,8 +4,10 @@ services:
     ports:
       - "1589:1589"
     environment:
-      # Set this to the exact URL you use in your browser (no trailing slash).
-      ORIGIN: http://localhost:1589
+      PORT: "1589"
+      # Direct HTTP access works with any LAN hostname/IP and published port.
+      # Behind an HTTPS reverse proxy, uncomment and set the browser-facing URL.
+      # ORIGIN: https://jellyalert.example.com
       SERVER_CORE_URL: http://backend:8090
     depends_on:
       backend:
