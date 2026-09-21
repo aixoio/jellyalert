@@ -47,6 +47,9 @@
 		const matches = show.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
 		return matches && (filter === 'all' || (filter === 'active' && show.active) || (filter === 'tracked' && show.active && !show.excluded) || (filter === 'excluded' && show.excluded) || (filter === 'removed' && !show.active));
 	}).sort((a, b) => a.title.localeCompare(b.title)));
+	let showPageCount = $derived(Math.ceil(visibleShows.length / 12));
+	let paginationStart = $derived(Math.max(0, Math.min(showPage - 2, showPageCount - 5)));
+	let showPages = $derived(Array.from({ length: Math.min(5, showPageCount) }, (_, index) => paginationStart + index));
 	let pagedShows = $derived(visibleShows.slice(showPage * 12, (showPage + 1) * 12));
 	$effect(() => { query; filter; showPage = 0; });
 	$effect(() => {
@@ -226,7 +229,18 @@
                             {/each}
                         </div>
 					{:else}<div class="grid justify-items-center gap-3 py-10 text-center"><h3 class="card-title">{shows.length ? 'No matching shows' : 'Your shows will appear here'}</h3><p>{shows.length ? 'Try another search or filter.' : 'Add and monitor shows in Sonarr. Jelly Alert imports them on its next scan.'}</p>{#if query || filter !== 'active'}<button class="btn btn-ghost btn-sm" onclick={() => { query = ''; filter = 'active'; }}>Clear filters</button>{/if}</div>{/if}
-					<div class="flex flex-wrap items-center justify-between gap-4"><span>{visibleShows.length ? `Showing ${showPage * 12 + 1}–${Math.min((showPage + 1) * 12, visibleShows.length)} of ${visibleShows.length}` : 'No shows'}</span><div class="join"><button class="btn btn-sm join-item" disabled={showPage === 0} onclick={() => showPage--} aria-label="Previous shows">Previous</button><button class="btn btn-sm join-item" disabled={(showPage + 1) * 12 >= visibleShows.length} onclick={() => showPage++} aria-label="Next shows">Next</button></div></div>
+					<div class="flex flex-wrap items-center justify-between gap-4"><span>{visibleShows.length ? `Showing ${showPage * 12 + 1}–${Math.min((showPage + 1) * 12, visibleShows.length)} of ${visibleShows.length}` : 'No shows'}</span>{#if showPageCount > 1}
+                            <nav aria-label="Show pages" class="space-y-2">
+                                <div class="join">
+                                    <button class="btn btn-sm join-item" disabled={showPage === 0} onclick={() => showPage--} aria-label="Previous shows">«</button>
+                                    {#each showPages as index (index)}
+                                        <button class="btn btn-sm join-item" class:btn-active={showPage === index} aria-current={showPage === index ? 'page' : undefined} aria-label={`Show page ${index + 1}`} onclick={() => showPage = index}>{index + 1}</button>
+                                    {/each}
+                                    <button class="btn btn-sm join-item" disabled={showPage === showPageCount - 1} onclick={() => showPage++} aria-label="Next shows">»</button>
+                                </div>
+                                <p class="text-sm text-base-content/70">Page {showPage + 1} of {showPageCount}</p>
+                            </nav>
+                        {/if}</div>
 					<p>Sonarr’s monitoring and library status also determine which episodes are eligible. Existing notification history is kept when you exclude a show.</p>
 				</div>
 			</section>
