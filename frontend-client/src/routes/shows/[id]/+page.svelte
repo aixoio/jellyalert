@@ -45,34 +45,34 @@
 <svelte:head><title>{detail?.show.title ?? 'Series'} · Jelly Alert</title></svelte:head>
 
 {#snippet progress(counts: ProgressCounts, label: string)}
-	<div class="progress-pair">
-		<div><div class="section-heading"><span>Aired</span><strong>{counts.aired} / {counts.total}</strong></div><progress class="progress progress-primary" value={counts.aired} max={counts.total || 1} aria-label={`${label}: episodes aired`}></progress></div>
-		<div><div class="section-heading"><span>In your library</span><strong>{counts.in_library} / {counts.total}</strong></div><progress class="progress progress-secondary" value={counts.in_library} max={counts.total || 1} aria-label={`${label}: episodes in library`}></progress></div>
+	<div class="my-3 grid grid-cols-1 gap-4">
+		<div><div class="flex flex-wrap items-center justify-between gap-4"><span>Aired</span><strong>{counts.aired} / {counts.total}</strong></div><progress class="progress" value={counts.aired} max={counts.total || 1} aria-label={`${label}: episodes aired`}></progress></div>
+		<div><div class="flex flex-wrap items-center justify-between gap-4"><span>In your library</span><strong>{counts.in_library} / {counts.total}</strong></div><progress class="progress progress-success" value={counts.in_library} max={counts.total || 1} aria-label={`${label}: episodes in library`}></progress></div>
 	</div>
 {/snippet}
 
-<div class="page-stack">
+<div class="grid min-w-0 grid-cols-1 gap-6">
 	<a class="link" href="/shows">← All shows</a>
 	{#if error}<div class="alert alert-error" role="alert"><span>{error}{detail ? ' Showing the last successful update.' : ''}</span><button class="btn btn-sm" onclick={() => retry++}>Retry</button></div>{/if}
 	{#if loading}<p role="status">Loading series progress…</p>
 	{:else if detail}
-		<header class="section-heading">
-			<div class="show-identity"><ShowPoster id={detail.show.id} /><div class="heading-copy"><h1 class="card-title">{detail.show.title}</h1><div class="actions"><span class="badge badge-outline">{detail.status}</span><span class="badge badge-primary badge-soft">{detail.show.mode === 'season' ? 'Full-season alerts' : 'Episode alerts'}</span></div><p>{detail.show.mode_overridden ? 'Individual notification preference' : 'Following your default preference'}</p></div></div>
+		<header class="flex flex-wrap items-center justify-between gap-4">
+			<div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-4"><ShowPoster id={detail.show.id} /><div class="space-y-2"><h1 class="card-title">{detail.show.title}</h1><div class="flex flex-wrap items-center gap-4"><span class="badge badge-outline">{detail.status}</span><span class="badge badge-soft">{detail.show.mode === 'season' ? 'Full-season alerts' : 'Episode alerts'}</span></div><p>{detail.show.mode_overridden ? 'Individual notification preference' : 'Following your default preference'}</p></div></div>
 		</header>
 		{#if detail.notification_block}<div class="alert alert-warning">{detail.notification_block}</div>{/if}
 		<section class="card card-border"><div class="card-body">
-			<div class="section-heading"><h2 class="card-title">Series progress</h2><span class="badge badge-outline">{percent(detail.counts.aired, detail.counts.total)}% of listed episodes aired</span></div>
+			<div class="flex flex-wrap items-center justify-between gap-4"><h2 class="card-title">Series progress</h2><span class="badge badge-outline">{percent(detail.counts.aired, detail.counts.total)}% of listed episodes aired</span></div>
 			{@render progress(detail.counts, 'Series')}
 			<p>{detail.status === 'ended' ? 'Series marked ended in Sonarr.' : 'The series is ongoing or its end is unconfirmed. More episodes may be added.'} Progress covers known regular episodes; specials are listed separately.</p>
 			{#if detail.counts.undated}<p>{detail.counts.undated} episode(s) have no confirmed air date.</p>{/if}
 			{#if !detail.counts.total}<p>No regular episodes are listed in Sonarr yet.</p>{/if}
 		</div></section>
-		<div class="dashboard">
+		<div class="grid min-w-0 grid-cols-1 items-start gap-6 xl:grid-cols-2">
 			<section class="card card-border"><div class="card-body">
 				<h2 class="card-title">Next release</h2>
 				{#if detail.next_release}
 					{@const release = detail.next_release}
-					<p class="countdown-text">{remaining(release.air_at)}</p>
+					<p class="text-xl font-semibold tabular-nums sm:text-3xl">{remaining(release.air_at)}</p>
 					<p>Season {release.season} · Episode {release.episode}: {release.title}</p>
 					<Time value={release.air_at} />
 					<p>Scheduled air time from Sonarr. Download availability may differ.</p>
@@ -82,7 +82,7 @@
 				<h2 class="card-title">Next notification</h2>
 				{#if detail.next_notification}
 					{@const notification = detail.next_notification}
-					<p class="countdown-text">{notification.episodes_remaining} episode{notification.episodes_remaining === 1 ? '' : 's'} still to air</p>
+					<p class="text-xl font-semibold tabular-nums sm:text-3xl">{notification.episodes_remaining} episode{notification.episodes_remaining === 1 ? '' : 's'} still to air</p>
 					<p>Season {notification.season}{notification.episode !== null ? ` · Episode ${notification.episode}` : ''}</p>
 					{#if notification.awaiting_confirmation}
 						<span class="badge badge-warning">Awaiting finale confirmation</span>
@@ -95,40 +95,30 @@
 				<a class="link" href="/activity">View notification activity</a>
 			</div></section>
 		</div>
-		<section class="page-stack" aria-label="Season and episode progress">
+		<section class="grid min-w-0 grid-cols-1 gap-6" aria-label="Season and episode progress">
 			<h2 class="card-title">Seasons & episodes</h2>
 			{#each detail.seasons.toReversed() as season (season.number)}
-				<details class="card card-border season-card" open={season.number === Math.max(...detail.seasons.map((item) => item.number))}>
-					<summary class="season-summary"><strong>{season.number ? `Season ${season.number}` : 'Specials'}</strong><span>{season.counts.aired} / {season.counts.total} aired · {season.counts.in_library} in library</span></summary>
-					<div class="card-body">
+				<details class="collapse collapse-arrow border border-base-300" open={season.number === Math.max(...detail.seasons.map((item) => item.number))}>
+					<summary class="collapse-title"><strong>{season.number ? `Season ${season.number}` : 'Specials'}</strong><span class="mt-1 block text-sm text-base-content/70">{season.counts.aired} / {season.counts.total} aired · {season.counts.in_library} in library</span></summary>
+					<div class="collapse-content min-w-0 space-y-4">
 						{@render progress(season.counts, `Season ${season.number}`)}
 						{#if season.completion_confirmed}<p>{season.final_air_at !== null && season.final_air_at <= now ? 'All listed episodes have aired.' : 'Confirmed final scheduled air time:'} <Time value={season.final_air_at} />{#if season.final_air_at !== null && season.final_air_at > now} · {remaining(season.final_air_at)}{/if}</p>
 						{:else if season.number > 0}<p>Season completion is unconfirmed.{season.counts.undated ? ` ${season.counts.undated} episode(s) still need air dates.` : ' Sonarr may still add or update episodes.'}</p>
 						{:else}<p>Specials have no season completion boundary. They can receive individual episode alerts in episode mode.</p>{/if}
 						{#if season.notification}<p>{season.notification.episodes_remaining} listed episode(s) still to air before {season.notification.episode !== null ? `episode ${season.notification.episode}’s alert` : 'the season alert'}{season.notification.awaiting_confirmation ? '; finale confirmation also required.' : '.'}</p>{/if}
-						<div class="scroll-region"><table class="table">
+						<div class="min-w-0 overflow-x-auto"><table class="table table-zebra">
 							<caption class="sr-only">Episodes in {season.number ? `season ${season.number}` : 'specials'}</caption>
 							<thead><tr><th scope="col">Episode</th><th scope="col">Air time</th><th scope="col">Progress</th></tr></thead>
 							<tbody>{#each season.episodes as episode (episode.id)}<tr>
 								<td><strong>{episode.number}. {episode.title}</strong>{#if !episode.monitored}<p>Not monitored</p>{/if}</td>
 								<td><Time value={episode.air_at} empty="Date unconfirmed" />{#if episode.air_at !== null && episode.air_at > now}<p>{remaining(episode.air_at)}</p>{/if}</td>
-								<td><div class="episode-badges"><span class="badge badge-outline">{episode.air_at === null ? 'Air date unknown' : episode.air_at <= now ? 'Aired' : 'Upcoming'}</span><span class="badge" class:badge-success={episode.has_file} class:badge-ghost={!episode.has_file}>{episode.has_file ? 'In library' : 'Not in library'}</span>{#if episode.notified}<span class="badge badge-outline">Alert already accounted for</span>{/if}</div></td>
+								<td><div class="flex flex-wrap gap-2"><span class="badge badge-outline">{episode.air_at === null ? 'Air date unknown' : episode.air_at <= now ? 'Aired' : 'Upcoming'}</span><span class="badge" class:badge-success={episode.has_file} class:badge-ghost={!episode.has_file}>{episode.has_file ? 'In library' : 'Not in library'}</span>{#if episode.notified}<span class="badge badge-outline">Alert already accounted for</span>{/if}</div></td>
 							</tr>{/each}</tbody>
 						</table></div>
 					</div>
 				</details>
 			{:else}<p>No episodes have been listed for this series yet.</p>{/each}
 		</section>
-		<footer class="page-footer"><span>Updates every 30 seconds · <Time value={detail.as_of} /></span><span>Tracking began <Time value={detail.tracking_since} /></span></footer>
+		<footer class="footer sm:footer-horizontal justify-between gap-4 py-6 text-base-content/70"><span>Updates every 30 seconds · <Time value={detail.as_of} /></span><span>Tracking began <Time value={detail.tracking_since} /></span></footer>
 	{/if}
 </div>
-
-<style>
-	.progress-pair { display: grid; gap: 1rem; margin-block: .75rem; }
-	.countdown-text { font-size: clamp(1.25rem, 3vw, 1.9rem); font-weight: 650; font-variant-numeric: tabular-nums; }
-	.season-summary { cursor: pointer; padding: 1.25rem; display: list-item; margin-left: 1rem; }
-	.season-summary span { margin-left: 1rem; }
-	.episode-badges { display: flex; flex-wrap: wrap; gap: .5rem; }
-	.table td { white-space: normal; min-width: 150px; }
-	@media (max-width: 520px) { .season-summary span { display: block; margin: .5rem 0 0; } }
-</style>
