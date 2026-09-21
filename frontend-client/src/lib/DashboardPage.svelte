@@ -242,7 +242,7 @@
                                         <div class="activity-entry">
                                             <div class="activity-copy">
                                                 <span class="badge badge-outline">{notification.mode === 'season' ? 'Full season' : 'Episode'} · Season {notification.season}</span>
-                                                <h2 class="card-title">{shows.find((show) => show.id === notification.series_id)?.title ?? `Show ${notification.series_id}`}</h2>
+                                                <h2 class="card-title"><a class="link link-hover" href={`/shows/${notification.series_id}`} aria-label={`View ${shows.find((show) => show.id === notification.series_id)?.title ?? `show ${notification.series_id}`} progress`}>{shows.find((show) => show.id === notification.series_id)?.title ?? `Show ${notification.series_id}`}</a></h2>
                                                 <details class="message-preview">
                                                     <summary>{notification.awaiting_confirmation ? 'Preview waiting notice' : 'Preview Discord embed'}</summary>
                                                     <div class="discord-preview" style:border-left-color={colorHex(notification.mode === 'season' ? colors.season_color : colors.episode_color)}>
