@@ -82,7 +82,7 @@ impl Discord {
         info!(message = %content, "preparing Discord message");
         let body = serde_json::to_string(&Message {
             embeds: [Embed {
-                author: Author { name: "Jelly Name" },
+                author: Author { name: "Jellyalert" },
                 description: content,
                 color,
                 image: poster.as_ref().map(|_| EmbedImage {
