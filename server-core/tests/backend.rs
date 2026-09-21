@@ -58,6 +58,8 @@ fn series() -> Series {
     Series {
         id: 1,
         title: "Test Show".into(),
+        year: Some(2024),
+        imdb_id: Some("tt1234567".into()),
         monitored: true,
         status: SeriesStatus::Continuing,
     }
@@ -358,13 +360,13 @@ async fn mock_server() -> MockServer {
             "/sonarr/api/v3/series",
             get(|headers: HeaderMap| async move {
                 assert_eq!(headers.get("X-Api-Key").unwrap(), "sonarr-secret");
-                Json(json!([{"id":1,"title":"Test Show","monitored":true,"status":"continuing"}]))
+                Json(json!([{"id":1,"title":"Test Show","year":2024,"imdbId":"tt1234567","monitored":true,"status":"continuing"}]))
             }),
         )
         .route(
             "/sonarr/api/v3/series/1",
             get(|| async {
-                Json(json!({"id":1,"title":"Test Show","monitored":true,"status":"continuing"}))
+                Json(json!({"id":1,"title":"Test Show","year":2024,"imdbId":"tt1234567","monitored":true,"status":"continuing"}))
             }),
         )
         .route(
@@ -425,6 +427,13 @@ async fn mock_server() -> MockServer {
                     };
                     assert!(message.get("content").is_none());
                     assert_eq!(message["embeds"][0]["author"]["name"], "Jelly Name");
+                    if message["embeds"][0].get("title").is_some() {
+                        assert_eq!(message["embeds"][0]["title"], "Test Show (2024)");
+                        assert_eq!(
+                            message["embeds"][0]["url"],
+                            "https://www.imdb.com/title/tt1234567/"
+                        );
+                    }
                     assert!(
                         message["embeds"][0]["description"]
                             .as_str()
@@ -495,6 +504,14 @@ async fn worker_end_to_end_rechecks_library_and_sends_once() {
     assert_eq!(
         mock.state.messages.lock().unwrap()[0]["embeds"][0]["image"]["url"],
         "attachment://series.jpg"
+    );
+    assert_eq!(
+        mock.state.messages.lock().unwrap()[0]["embeds"][0]["title"],
+        "Test Show (2024)"
+    );
+    assert_eq!(
+        mock.state.messages.lock().unwrap()[0]["embeds"][0]["url"],
+        "https://www.imdb.com/title/tt1234567/"
     );
     assert_eq!(mock.state.requests.load(Ordering::Relaxed), 1);
     assert_eq!(

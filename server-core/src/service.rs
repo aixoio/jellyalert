@@ -6,7 +6,7 @@ use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::{
     database::{Database, DeliveryState},
-    discord::{Delivery, Discord},
+    discord::{Delivery, Discord, SeriesMetadata},
     planner,
     sonarr::{Series, Sonarr},
 };
@@ -54,6 +54,20 @@ impl Service {
                 .await?;
         match content {
             Some((content, series_id, mode)) => {
+                let series = match self.sonarr.series_by_id(series_id).await {
+                    Ok(series) if series.id == series_id => Some(series),
+                    Ok(_) => {
+                        warn!(
+                            series_id,
+                            "test notification will be sent without series metadata because Sonarr returned the wrong series"
+                        );
+                        None
+                    }
+                    Err(error) => {
+                        warn!(series_id, error = %error, "test notification will be sent without series metadata");
+                        None
+                    }
+                };
                 let poster = match self.sonarr.poster(series_id).await {
                     Ok(poster) => poster,
                     Err(error) => {
@@ -65,7 +79,16 @@ impl Service {
                 let color = self.db.embed_colors().await?.for_mode(mode);
                 let delivery = self
                     .discord
-                    .send_with_poster(&content, poster, color)
+                    .send_with_poster(
+                        &content,
+                        poster,
+                        color,
+                        series.as_ref().map(|series| SeriesMetadata {
+                            title: &series.title,
+                            year: series.year,
+                            imdb_id: series.imdb_id.as_deref(),
+                        }),
+                    )
                     .await?;
                 info!(series_id, mode = mode.as_str(), outcome = ?delivery, "test notification attempt completed");
                 Ok(Some(delivery))
@@ -235,11 +258,12 @@ impl Service {
         let refreshed = async {
             let series = self.sonarr.series_by_id(series_id).await?;
             anyhow::ensure!(series.id == series_id, "Sonarr returned the wrong series");
-            self.refresh(&series).await
+            let plans = self.refresh(&series).await?;
+            Ok::<_, anyhow::Error>((series, plans))
         }
         .await;
-        let plans = match refreshed {
-            Ok(plans) => plans,
+        let (series, plans) = match refreshed {
+            Ok(refreshed) => refreshed,
             Err(error) => {
                 self.db.defer(&key, now.timestamp() + 60).await?;
                 warn!(notification_key = %key, series_id, error = %error, "notification postponed because current series state could not be verified");
@@ -266,7 +290,16 @@ impl Service {
         info!(notification_key = %key, series_id, mode = plan.mode.as_str(), has_poster = poster.is_some(), "sending Discord notification");
         let delivery = self
             .discord
-            .send_with_poster(&plan.content, poster, color)
+            .send_with_poster(
+                &plan.content,
+                poster,
+                color,
+                Some(SeriesMetadata {
+                    title: &series.title,
+                    year: series.year,
+                    imdb_id: series.imdb_id.as_deref(),
+                }),
+            )
             .await?;
         let finished = Utc::now().timestamp();
         match delivery {

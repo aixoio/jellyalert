@@ -15,6 +15,10 @@ use tracing::{debug, instrument, trace, warn};
 pub struct Series {
     pub id: i64,
     pub title: String,
+    #[serde(default)]
+    pub year: Option<i32>,
+    #[serde(default)]
+    pub imdb_id: Option<String>,
     pub monitored: bool,
     pub status: SeriesStatus,
 }

@@ -28,6 +28,10 @@ struct Message<'a> {
 #[derive(Serialize)]
 struct Embed<'a> {
     author: Author,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
     description: &'a str,
     color: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -50,6 +54,13 @@ struct RateLimit {
     retry_after: f64,
 }
 
+#[derive(Clone, Copy)]
+pub struct SeriesMetadata<'a> {
+    pub title: &'a str,
+    pub year: Option<i32>,
+    pub imdb_id: Option<&'a str>,
+}
+
 impl Discord {
     pub fn new(webhook: &str) -> anyhow::Result<Self> {
         let mut webhook =
@@ -66,11 +77,11 @@ impl Discord {
     }
 
     pub async fn send(&self, content: &str) -> anyhow::Result<Delivery> {
-        self.send_with_poster(content, None, 0x5865f2).await
+        self.send_with_poster(content, None, 0x5865f2, None).await
     }
 
     #[instrument(
-        skip(self, content, poster),
+        skip(self, content, poster, series),
         fields(message.length = content.len(), message.color = color, message.has_poster = poster.is_some())
     )]
     pub async fn send_with_poster(
@@ -78,11 +89,16 @@ impl Discord {
         content: &str,
         poster: Option<Vec<u8>>,
         color: u32,
+        series: Option<SeriesMetadata<'_>>,
     ) -> anyhow::Result<Delivery> {
         info!(message = %content, "preparing Discord message");
+        let title = series.map(series_title);
+        let url = series.and_then(|series| series.imdb_id.and_then(imdb_series_url));
         let body = serde_json::to_string(&Message {
             embeds: [Embed {
-                author: Author { name: "Jellyalert" },
+                author: Author { name: "Jelly Name" },
+                title,
+                url,
                 description: content,
                 color,
                 image: poster.as_ref().map(|_| EmbedImage {
@@ -161,4 +177,26 @@ impl Discord {
         error!(%status, "Discord returned a server error with an uncertain delivery outcome");
         Ok(Delivery::Uncertain)
     }
+}
+
+fn series_title(series: SeriesMetadata<'_>) -> String {
+    let title = match series.year.filter(|year| *year > 0) {
+        Some(year) => format!("{} ({year})", series.title),
+        None => series.title.to_owned(),
+    };
+    // Discord embed titles are limited to 256 UTF-16 code units.
+    let mut units = 0;
+    title
+        .chars()
+        .take_while(|character| {
+            units += character.len_utf16();
+            units <= 256
+        })
+        .collect()
+}
+
+fn imdb_series_url(id: &str) -> Option<String> {
+    let digits = id.strip_prefix("tt")?;
+    (!digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| format!("https://www.imdb.com/title/{id}/"))
 }
