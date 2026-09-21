@@ -15,7 +15,20 @@
 	let refreshing = $state(false);
 	let busy = $state('');
 	let error = $state('');
-	let feedback = $state('');
+	let toast = $state<{ ok: boolean; message: string } | null>(null);
+	let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function dismissToast() {
+		clearTimeout(toastTimer);
+		toast = null;
+	}
+
+	function showToast(message: string, ok = true) {
+		if (!alive) return;
+		dismissToast();
+		toast = { ok, message };
+		toastTimer = setTimeout(dismissToast, ok ? 5000 : 10000);
+	}
 	let updatedAt = $state<number | null>(null);
 	let query = $state('');
 	let filter = $state('active');
@@ -69,7 +82,7 @@
 	async function change(name: string, path: string, method: 'PUT' | 'POST', body: unknown, success: string, saved?: () => void) {
 		if (locked) return;
 		busy = name;
-		feedback = '';
+		dismissToast();
 		error = '';
 		try {
 			await api<void>(path, { method, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -78,11 +91,22 @@
 				shows = shows.map((show) => show.id === id ? { ...show, excluded: !show.excluded } : show);
 			}
 			saved?.();
-			feedback = success;
+			showToast(success);
 			busy = '';
 			await refresh(0);
 		} catch (cause) {
 			error = `${errorMessage(cause)} Refresh to confirm the current setting before retrying.`;
+		} finally { busy = ''; }
+	}
+
+	async function sendTest(notification: Notification) {
+		if (locked) return;
+		busy = `test:${notification.key}`;
+		try {
+			await api<void>(`notifications/${encodeURIComponent(notification.key)}/test`, { method: 'POST' });
+			showToast('Test sent to Discord. Normal delivery is unchanged.');
+		} catch (cause) {
+			showToast(`${errorMessage(cause)} Normal delivery is unchanged.`, false);
 		} finally { busy = ''; }
 	}
 
@@ -92,7 +116,7 @@
 		const timer = setInterval(() => { if (!document.hidden) void refresh(); }, 30_000);
 		const visible = () => { if (!document.hidden) void refresh(); };
 		document.addEventListener('visibilitychange', visible);
-		return () => { alive = false; clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
+		return () => { alive = false; clearTimeout(toastTimer); clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
 	});
 </script>
 
@@ -116,9 +140,14 @@
 			<button class="btn btn-sm" onclick={() => refresh()} disabled={locked}>Retry</button>
 		</div>
 	{/if}
-	{#if feedback}
-		<div role="status" class="alert alert-success notice"><span>{feedback}</span><button class="btn btn-ghost btn-sm" onclick={() => feedback = ''} aria-label="Dismiss confirmation">Dismiss</button></div>
-	{/if}
+	<div class="toast toast-end toast-bottom z-50 max-w-full" role="status" aria-live="polite" aria-atomic="true">
+		{#if toast}
+			<div class="alert max-w-sm" class:alert-success={toast.ok} class:alert-warning={!toast.ok}>
+				<span>{toast.message}</span>
+				<button class="btn btn-ghost btn-sm" onclick={dismissToast} aria-label="Dismiss notification">✕</button>
+			</div>
+		{/if}
+	</div>
 
 	{#if loading}
 		<div class="empty-state" role="status"><span class="loading loading-spinner loading-lg"></span><p>Connecting to Server Core…</p></div>
@@ -159,7 +188,7 @@
             {#if section === 'shows'}
 			<section id="shows" class="page-stack" aria-label="Show preferences">
 				<div class="page-stack">
-					<div class="section-heading"><p>Changes save automatically, one show at a time.</p><div class="actions"><span class="badge badge-primary badge-soft">{tracked} tracked</span><span class="badge badge-ghost">{excluded} excluded</span></div></div>
+					<div class="section-heading"><p>Changes save automatically. Manage the shared default in Settings.</p><div class="actions"><span class="badge badge-primary badge-soft">{tracked} tracked</span><span class="badge badge-ghost">{excluded} excluded</span></div></div>
                     <div class="card card-border"><div class="card-body show-toolbar">
                         <label class="fieldset search-field"><span class="fieldset-legend">Search shows</span><input class="input" type="search" placeholder="Search by title…" bind:value={query} /></label>
                         <label class="fieldset filter-field"><span class="fieldset-legend">Show status</span><select class="select" aria-label="Filter shows" bind:value={filter}><option value="active">In Sonarr</option><option value="tracked">Tracked</option><option value="excluded">Excluded</option><option value="removed">Removed from Sonarr</option><option value="all">All shows</option></select></label>
@@ -173,15 +202,14 @@
                                         <div class="section-heading"><span class="badge" class:badge-ghost={!show.active || show.excluded} class:badge-success={show.active && !show.excluded} class:badge-soft={show.active && !show.excluded}>{!show.active ? 'Removed from Sonarr' : show.excluded ? 'Excluded' : 'Tracked'}</span>{#if busy === `show:${show.id}` || busy === `mode:${show.id}`}<span class="loading loading-spinner loading-xs" aria-label="Saving"></span>{/if}</div>
                                         <div class="show-identity"><ShowPoster id={show.id} /><h2 class="card-title show-name">{show.title}</h2></div>
                                         <div class="show-controls">
-                                            <label class="fieldset"><span class="fieldset-legend">Notify me</span><select class="select" aria-label={`Notification mode for ${show.title}`} value={show.mode} disabled={locked || !show.active}
+                                            <label class="fieldset"><span class="fieldset-legend">Notify me</span><select class="select" aria-label={`Notification mode for ${show.title}`} value={show.mode_overridden ? show.mode : 'default'} disabled={locked || !show.active}
                                         onchange={(event) => {
                                             const mode = event.currentTarget.value;
-                                            event.currentTarget.value = show.mode;
-                                            if (mode !== 'episode' && mode !== 'season') return;
-                                            void change(`mode:${show.id}`, `shows/${show.id}/mode`, 'PUT', { mode }, `${show.title}: ${mode === 'episode' ? 'every episode' : 'full seasons'} saved.`, () => {
-                                                shows = shows.map((item) => item.id === show.id ? { ...item, mode } : item);
-                                            });
+                                            event.currentTarget.value = show.mode_overridden ? show.mode : 'default';
+                                            if (mode !== 'episode' && mode !== 'season' && mode !== 'default') return;
+                                            void change(`mode:${show.id}`, `shows/${show.id}/mode`, 'PUT', { mode }, `${show.title}: ${mode === 'default' ? 'use default' : mode === 'episode' ? 'every episode' : 'full seasons'} saved.`);
                                         }}>
+                                        <option value="default">Use default{!show.mode_overridden ? ` · ${show.mode === 'episode' ? 'Every episode' : 'Full seasons'}` : ''}</option>
                                         <option value="episode">Every episode</option>
                                         <option value="season">Full seasons</option>
                                     </select></label>
@@ -212,7 +240,7 @@
                                             <div class="activity-copy">
                                                 <span class="badge badge-outline">{notification.mode === 'season' ? 'Full season' : 'Episode'} · Season {notification.season}</span>
                                                 <h2 class="card-title">{shows.find((show) => show.id === notification.series_id)?.title ?? `Show ${notification.series_id}`}</h2>
-                                                <div><p><strong>{activityView === 'upcoming' ? 'Discord message preview' : 'Discord message'}</strong></p><p>{notification.content}</p></div>
+                                                <div><p><strong>{activityView === 'upcoming' ? 'Discord message preview' : 'Discord message'}</strong></p><div class="discord-preview"><strong>Jelly Alert <span class="badge badge-sm">APP</span></strong><p>{notification.content}</p></div></div>
                                             </div>
                                             <dl class="activity-meta">
                                                 <div><dt>Air time</dt><dd><Time value={notification.due_at} /></dd></div>
@@ -220,6 +248,8 @@
                                                 {#if notification.sent_at}<div><dt>Sent at</dt><dd><Time value={notification.sent_at} /></dd></div>{:else if notification.attempted_at}<div><dt>Attempted at</dt><dd><Time value={notification.attempted_at} /></dd></div>{/if}
                                             </dl>
                                         </div>
+                                        <div class="card-actions"><button class="btn btn-outline btn-sm" disabled={locked} onclick={() => sendTest(notification)}>{busy === `test:${notification.key}` ? 'Sending test…' : 'Send test to Discord'}</button></div>
+                                        <p class="test-help">Sends the preview to your configured Discord channel. Testing does not mark this notification as sent or remove it from normal delivery.</p>
                                         {#if notification.state === 'uncertain' || notification.state === 'sending'}<div class="alert alert-warning"><p>Delivery could not be confirmed. This attempt will not be repeated to prevent duplicate notifications.</p></div>{/if}
                                         {#if notification.state === 'failed'}<div class="alert alert-error"><p>Discord rejected this notification. Check Server Core’s logs for details.</p></div>{/if}
                                         {#if notification.state === 'covered'}<p>These episodes were already covered by an earlier notification.</p>{/if}
@@ -235,3 +265,10 @@
 	{:else}<div class="empty-state"><h2 class="card-title">Waiting for Server Core</h2><p>Start the backend on port 8090, then retry the connection.</p></div>{/if}
 	<footer class="page-footer"><span>Jelly Alert · Sonarr → Discord</span><span>Refreshes every 30 seconds while visible · Updated <Time value={updatedAt} empty="—" /></span></footer>
 </div>
+
+<style>
+    .discord-preview { margin-top: 0.5rem; padding: 1rem; border-radius: 0.5rem; background: #313338; color: #dbdee1; overflow-wrap: anywhere; }
+    .discord-preview strong { color: #f2f3f5; }
+    .discord-preview p { margin-top: 0.4rem; white-space: pre-wrap; }
+    .test-help { font-size: 0.875rem; }
+</style>

@@ -23,7 +23,7 @@ SQLite is created automatically at `sqlite_database_path`. Relative paths resolv
 - Sonarr metadata is the authority for season boundaries. Incomplete or incorrect upstream metadata can delay notifications or produce an incorrect boundary. An ongoing season with no finale or later season is deliberately held until Sonarr supplies completion evidence.
 - First startup records a persistent tracking start time. Episodes, and seasons whose final air time, predate that time are not notified. This prevents importing a historical backlog. Subsequent restarts retain that timestamp and catch up on eligible missed air times.
 - Excluded shows never get new delivery attempts. Their exclusion survives restarts, rescans, renames, and removal/readdition with the same Sonarr ID. Unexcluding resumes tracking and may catch up on episodes that aired after the tracking start time.
-- Each series has its own persistent mode and exclusion. New series default to episode mode. Migration from the global setting copies that value to every existing series, preserves delivery history, and removes the global setting. Rescanning or readding a Sonarr ID preserves its preference. Episode delivery history is shared with season mode: an episode covered by a season notification will not later receive an individual alert. A season whose missing episodes have all already been notified is marked `covered` instead of sent again.
+- Each series has its own persistent mode and exclusion. New series inherit the shared default (initially episode). Changing the default updates all inheriting series atomically while preserving explicit choices and exclusions. Selecting a mode individually creates an override, even if it matches the default; selecting `default` restores inheritance. Migration preserves all existing series as overrides because older versions did not record whether a choice was manual. Rescanning or readding a Sonarr ID preserves its preference. Episode delivery history is shared with season mode: an episode covered by a season notification will not later receive an individual alert. A season whose missing episodes have all already been notified is marked `covered` instead of sent again.
 
 An air time is **not proof that a downloadable release exists**. Jelly Alert does not query indexers. Discord messages say that the scheduled air time has been reached and prompt you to check for downloads.
 
@@ -53,18 +53,21 @@ All endpoints are unauthenticated for trusted LAN use. JSON mutation bodies requ
 
 | Method | Path | Body / result |
 | --- | --- | --- |
-| PUT | `/api/shows/{id}/mode` | Body: `{"mode":"episode"}` or `{"mode":"season"}`; 204, or 404 for unknown show |
-| GET | `/api/shows` | Array of `{id,title,excluded,active,mode}`, sorted by title |
+| PUT | `/api/settings/reset-all` | Body: `{"mode":"episode"}` or `{"mode":"season"}`; atomically saves the default and resets all shows to inherit it, preserving exclusions and active status; 204 |
+| GET / PUT | `/api/settings` | Read or update `{"mode":"episode"}` or `{"mode":"season"}`; PUT returns 204 |
+| PUT | `/api/shows/{id}/mode` | Body: `{"mode":"episode"}` or `{"mode":"season"}` or `{"mode":"default"}`; 204, or 404 for unknown show |
+| GET | `/api/shows` | Array of `{id,title,excluded,active,mode,mode_overridden}`, sorted by title |
 | PUT | `/api/shows/{id}/exclusion` | Body: `{"excluded":true}` or `false`; 204, or 404 for unknown show |
 | GET | `/api/notifications?limit=50&offset=0` | All history/plans, newest due time first; limit clamped to 1–100 |
 | GET | `/api/notifications?view=upcoming` | Pending plans for each series’ selected mode and active, non-excluded shows; earliest due time first |
 | GET | `/api/notifications?view=history` | Non-pending attempts, newest due time first; accepts `limit` and `offset` |
 | GET | `/api/health` | Worker scan/delivery times, webhook state, tracking start, unresolved delivery count |
+| POST | `/api/notifications/{key}/test` | Send the stored preview once to Discord; 204 on success, 404 if absent, 429 if rate limited, 502 if rejected/unconfirmed. No request body. Does not alter notification state, coverage, webhook settings, or worker health. |
 | POST | `/api/webhook/resume` | Reenable a repaired webhook; 204 |
 
-Notifications include `key`, `series_id`, `mode`, `season`, `content` (plain text), `due_at`, `state`, `attempted_at`, and `sent_at`. The former `/api/settings` endpoint has been removed; it cannot change modes globally. Timestamps are Unix seconds in UTC. Notification states are `pending`, `sending`, `sent`, `uncertain`, `failed`, and `covered`. `pending` may be held by the selected mode, exclusions, or webhook backoff; it is not a promise of immediate delivery. Health returns 200 if the API/database work; inspect `last_scan_succeeded` and `last_scan_at` to assess Sonarr health. Malformed/unknown fields, modes, and activity views are rejected, and internal error details stay in stderr.
+Notifications include `key`, `series_id`, `mode`, `season`, `content` (plain text), `due_at`, `state`, `attempted_at`, and `sent_at`. `mode` on each show is the effective preference; `mode_overridden` indicates an individual choice. Timestamps are Unix seconds in UTC. Notification states are `pending`, `sending`, `sent`, `uncertain`, `failed`, and `covered`. `pending` may be held by the selected mode, exclusions, or webhook backoff; it is not a promise of immediate delivery. Health returns 200 if the API/database work; inspect `last_scan_succeeded` and `last_scan_at` to assess Sonarr health. Malformed/unknown fields, modes, and activity views are rejected, and internal error details stay in stderr.
 
-Per-series mode/exclusion mutations are serialized with an in-flight Discord request. Once a successful mutation response is returned, the new policy applies to subsequent sends; a message already in flight cannot be recalled. The route may wait for that bounded request to finish.
+Default and per-series mode/exclusion mutations are serialized with an in-flight Discord request. Once a successful mutation response is returned, the new policy applies to subsequent sends; a message already in flight cannot be recalled. The route may wait for that bounded request to finish.
 
 ```sh
 curl http://127.0.0.1:8090/api/shows
@@ -96,3 +99,5 @@ Integration tests bind local loopback sockets, use temporary SQLite files, and d
 - [Axum server lifecycle](https://docs.rs/axum/latest/axum/serve/fn.serve.html)
 
 Show artwork: `GET /api/shows/{id}/poster` proxies Sonarr’s JPEG poster for a known show. Images are capped at 5 MiB, redirects are disabled, and successful responses are privately cacheable for 24 hours. Missing artwork returns 404; upstream failures or invalid images return 502. No Sonarr credentials reach the browser.
+
+Activity displays a Discord-style preview and a test-send button for each listed episode or season notification, including history. Test sends use the exact stored message, so they are real channel messages without a test prefix. They are never automatically retried and never consume the normal scheduled delivery. The preview approximates Discord styling; channel identity and rendering depend on Discord.

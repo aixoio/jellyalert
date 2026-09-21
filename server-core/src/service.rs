@@ -40,6 +40,21 @@ impl Service {
         }
     }
 
+    /// Send the stored preview once without claiming, covering, or completing it.
+    /// Test outcomes never change normal delivery state or worker health.
+    pub async fn test_notification(&self, key: &str) -> anyhow::Result<Option<Delivery>> {
+        let _guard = self.delivery_gate.lock().await;
+        let content: Option<String> =
+            sqlx::query_scalar("SELECT content FROM notifications WHERE key = ?")
+                .bind(key)
+                .fetch_optional(self.db.pool())
+                .await?;
+        match content {
+            Some(content) => Ok(Some(self.discord.send(&content).await?)),
+            None => Ok(None),
+        }
+    }
+
     pub async fn scan(&self) -> anyhow::Result<()> {
         let series = self.sonarr.series().await?;
         anyhow::ensure!(

@@ -49,6 +49,13 @@ impl Database {
                 include_str!("../migrations/202609200002_per_show_mode.sql").into_sql_str(),
                 false,
             ),
+            Migration::new(
+                202609210001,
+                "default mode".into(),
+                MigrationType::Simple,
+                include_str!("../migrations/202609210001_default_mode.sql").into_sql_str(),
+                false,
+            ),
         ])
         .run(&self.pool)
         .await?;
@@ -63,13 +70,55 @@ impl Database {
     }
 
     pub async fn set_show_mode(&self, id: i64, mode: NotificationMode) -> anyhow::Result<bool> {
-        Ok(sqlx::query("UPDATE shows SET mode = ? WHERE id = ?")
+        Ok(
+            sqlx::query("UPDATE shows SET mode = ?, mode_overridden = 1 WHERE id = ?")
+                .bind(mode.as_str())
+                .bind(id)
+                .execute(&self.pool)
+                .await?
+                .rows_affected()
+                == 1,
+        )
+    }
+
+    pub async fn default_mode(&self) -> anyhow::Result<NotificationMode> {
+        let mode: String = sqlx::query_scalar("SELECT default_mode FROM settings WHERE id = 1")
+            .fetch_one(&self.pool)
+            .await?;
+        NotificationMode::try_from(mode.as_str())
+    }
+
+    pub async fn set_default_mode(&self, mode: NotificationMode) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("UPDATE settings SET default_mode = ? WHERE id = 1")
             .bind(mode.as_str())
-            .bind(id)
-            .execute(&self.pool)
-            .await?
-            .rows_affected()
-            == 1)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE shows SET mode = ? WHERE mode_overridden = 0")
+            .bind(mode.as_str())
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn reset_all_show_modes(&self, mode: NotificationMode) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("UPDATE settings SET default_mode = ? WHERE id = 1")
+            .bind(mode.as_str())
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE shows SET mode = ?, mode_overridden = 0")
+            .bind(mode.as_str())
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn reset_show_mode(&self, id: i64) -> anyhow::Result<bool> {
+        Ok(sqlx::query("UPDATE shows SET mode = (SELECT default_mode FROM settings WHERE id = 1), mode_overridden = 0 WHERE id = ?")
+            .bind(id).execute(&self.pool).await?.rows_affected() == 1)
     }
 
     pub async fn tracking_since(&self) -> anyhow::Result<i64> {
@@ -81,7 +130,7 @@ impl Database {
     }
 
     pub async fn shows(&self) -> anyhow::Result<Vec<Show>> {
-        sqlx::query("SELECT id, title, excluded, active, mode FROM shows ORDER BY title, id")
+        sqlx::query("SELECT id, title, excluded, active, mode, mode_overridden FROM shows ORDER BY title, id")
             .fetch_all(&self.pool)
             .await?
             .iter()
@@ -91,6 +140,7 @@ impl Database {
                     title: row.try_get("title")?,
                     excluded: row.try_get("excluded")?,
                     active: row.try_get("active")?,
+                    mode_overridden: row.try_get("mode_overridden")?,
                     mode: NotificationMode::try_from(row.try_get::<&str, _>("mode")?)?,
                 })
             })
@@ -113,7 +163,7 @@ impl Database {
             .execute(&mut *tx)
             .await?;
         for (id, title) in shows {
-            sqlx::query("INSERT INTO shows (id, title) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET title = excluded.title, active = 1")
+            sqlx::query("INSERT INTO shows (id, title, mode) VALUES (?, ?, (SELECT default_mode FROM settings WHERE id = 1)) ON CONFLICT(id) DO UPDATE SET title = excluded.title, active = 1")
                 .bind(id).bind(title).execute(&mut *tx).await?;
         }
         tx.commit().await?;

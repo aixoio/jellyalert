@@ -24,11 +24,14 @@ pub fn router(service: Service) -> Router {
     let state = ApiState { service };
     Router::new()
         .route("/api/health", get(health))
+        .route("/api/settings", get(settings).put(update_settings))
+        .route("/api/settings/reset-all", put(reset_all_modes))
         .route("/api/shows/{id}/mode", put(update_show_mode))
         .route("/api/shows", get(shows))
         .route("/api/shows/{id}/poster", get(poster))
         .route("/api/shows/{id}/exclusion", put(exclude))
         .route("/api/notifications", get(notifications))
+        .route("/api/notifications/{key}/test", post(test_notification))
         .route("/api/webhook/resume", post(resume))
         .with_state(state)
 }
@@ -69,13 +72,69 @@ struct Settings {
     mode: NotificationMode,
 }
 
-async fn update_show_mode(
+async fn settings(State(state): State<ApiState>) -> ApiResult<Settings> {
+    Ok(Json(Settings {
+        mode: state.service.db.default_mode().await?,
+    }))
+}
+
+async fn update_settings(
     State(state): State<ApiState>,
-    Path(id): Path<i64>,
     Json(settings): Json<Settings>,
 ) -> Result<StatusCode, ApiError> {
     let _guard = state.service.delivery_gate.lock().await;
-    let found = state.service.db.set_show_mode(id, settings.mode).await?;
+    state.service.db.set_default_mode(settings.mode).await?;
+    state.service.wake.notify_one();
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn reset_all_modes(
+    State(state): State<ApiState>,
+    Json(settings): Json<Settings>,
+) -> Result<StatusCode, ApiError> {
+    let _guard = state.service.delivery_gate.lock().await;
+    state.service.db.reset_all_show_modes(settings.mode).await?;
+    state.service.wake.notify_one();
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ShowMode {
+    Default,
+    Episode,
+    Season,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShowSettings {
+    mode: ShowMode,
+}
+
+async fn update_show_mode(
+    State(state): State<ApiState>,
+    Path(id): Path<i64>,
+    Json(settings): Json<ShowSettings>,
+) -> Result<StatusCode, ApiError> {
+    let _guard = state.service.delivery_gate.lock().await;
+    let found = match settings.mode {
+        ShowMode::Default => state.service.db.reset_show_mode(id).await?,
+        ShowMode::Episode => {
+            state
+                .service
+                .db
+                .set_show_mode(id, NotificationMode::Episode)
+                .await?
+        }
+        ShowMode::Season => {
+            state
+                .service
+                .db
+                .set_show_mode(id, NotificationMode::Season)
+                .await?
+        }
+    };
     state.service.wake.notify_one();
     Ok(if found {
         StatusCode::NO_CONTENT
@@ -261,4 +320,41 @@ async fn notifications(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(Json(notifications))
+}
+
+async fn test_notification(
+    State(state): State<ApiState>,
+    Path(key): Path<String>,
+) -> Result<Response, ApiError> {
+    use crate::discord::Delivery;
+    let result = state.service.test_notification(&key).await?;
+    let (status, error) = match result {
+        Some(Delivery::Sent) => return Ok(StatusCode::NO_CONTENT.into_response()),
+        None => (
+            StatusCode::NOT_FOUND,
+            "Notification no longer exists. Refresh activity.",
+        ),
+        Some(Delivery::RateLimited { retry_seconds }) => {
+            return Ok((StatusCode::TOO_MANY_REQUESTS,
+                [("retry-after", retry_seconds.to_string())],
+                Json(serde_json::json!({"error": format!("Discord rate limited the test. Try again in {retry_seconds} seconds.")}))).into_response());
+        }
+        Some(Delivery::Retryable { .. }) => (
+            StatusCode::BAD_GATEWAY,
+            "Could not connect to Discord. The test was not sent.",
+        ),
+        Some(Delivery::Disabled) => (
+            StatusCode::BAD_GATEWAY,
+            "Discord rejected the webhook. Check Server Core configuration.",
+        ),
+        Some(Delivery::Rejected) => (
+            StatusCode::BAD_GATEWAY,
+            "Discord rejected the test message.",
+        ),
+        Some(Delivery::Uncertain) => (
+            StatusCode::BAD_GATEWAY,
+            "Test delivery could not be confirmed. It may have arrived; check Discord before sending another test.",
+        ),
+    };
+    Ok((status, Json(ErrorBody { error })).into_response())
 }

@@ -176,7 +176,7 @@ async fn migrations_restart_and_deduplication() {
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(count, 2);
+    assert_eq!(count, 3);
     reopened.pool().close().await;
 }
 
@@ -584,6 +584,105 @@ async fn api_trusted_lan_validation_and_persistent_policy() {
             StatusCode::OK
         );
     }
+    for body in [r#"{"mode":"season"}"#, r#"{"mode":"episode"}"#] {
+        assert_eq!(
+            client
+                .put(format!("{base}/api/settings"))
+                .header("Content-Type", "application/json")
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+    }
+    assert_eq!(
+        fixture.db.shows().await.unwrap()[0].mode,
+        NotificationMode::Season
+    );
+    assert_eq!(
+        client
+            .put(format!("{base}/api/shows/1/mode"))
+            .header("Content-Type", "application/json")
+            .body(r#"{"mode":"default"}"#)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert!(!fixture.db.shows().await.unwrap()[0].mode_overridden);
+    assert_eq!(
+        fixture.db.shows().await.unwrap()[0].mode,
+        NotificationMode::Episode
+    );
+    for body in [
+        r#"{"mode":"default"}"#,
+        r#"{}"#,
+        r#"{"mode":"season","extra":true}"#,
+    ] {
+        assert_eq!(
+            client
+                .put(format!("{base}/api/settings"))
+                .header("Content-Type", "application/json")
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+    let settings: serde_json::Value = serde_json::from_str(
+        &client
+            .get(format!("{base}/api/settings"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(settings["mode"], "episode");
+    fixture
+        .db
+        .set_show_mode(1, NotificationMode::Episode)
+        .await
+        .unwrap();
+    assert_eq!(
+        client
+            .put(format!("{base}/api/settings/reset-all"))
+            .header("Content-Type", "application/json")
+            .body(r#"{"mode":"invalid"}"#)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert!(fixture.db.shows().await.unwrap()[0].mode_overridden);
+    assert_eq!(
+        client
+            .put(format!("{base}/api/settings/reset-all"))
+            .header("Content-Type", "application/json")
+            .body(r#"{"mode":"season"}"#)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    let show = fixture.db.shows().await.unwrap().remove(0);
+    assert_eq!(show.mode, NotificationMode::Season);
+    assert!(!show.mode_overridden);
+    assert!(show.excluded);
+    assert_eq!(
+        fixture.db.default_mode().await.unwrap(),
+        NotificationMode::Season
+    );
+
     task.abort();
 }
 
@@ -845,6 +944,11 @@ async fn per_show_migration_preserves_legacy_policy_and_history() {
     let db = Database::connect(path.to_str().unwrap()).await.unwrap();
     assert_eq!(db.shows().await.unwrap()[0].mode, NotificationMode::Season);
     assert!(db.shows().await.unwrap()[0].excluded);
+    assert!(db.shows().await.unwrap()[0].mode_overridden);
+    db.set_default_mode(NotificationMode::Episode)
+        .await
+        .unwrap();
+    assert_eq!(db.shows().await.unwrap()[0].mode, NotificationMode::Season);
     assert_eq!(db.tracking_since().await.unwrap(), 123);
     let covered: i64 = sqlx::query_scalar("SELECT count(*) FROM covered_episodes")
         .fetch_one(db.pool())
@@ -911,4 +1015,177 @@ async fn poster_proxy_bounds_sources_and_rejects_invalid_images() {
         );
     }
     task.abort();
+}
+
+#[tokio::test]
+async fn test_sends_leave_normal_delivery_untouched() {
+    let fixture = TestDb::new().await;
+    let mock = mock_server().await;
+    *mock.state.episodes.lock().unwrap() = episode_json(Utc::now().timestamp() - 1, false);
+    let service = service(fixture.db.clone(), &mock);
+    service.scan().await.unwrap();
+    let before: String = sqlx::query_scalar("SELECT json_object('state', state, 'attempted_at', attempted_at, 'sent_at', sent_at) FROM notifications WHERE key = 'episode:1'")
+        .fetch_one(fixture.db.pool()).await.unwrap();
+    let router = api::router(service.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = reqwest::Client::new();
+    for (upstream, expected) in [
+        (StatusCode::OK, StatusCode::NO_CONTENT),
+        (StatusCode::TOO_MANY_REQUESTS, StatusCode::TOO_MANY_REQUESTS),
+        (StatusCode::NOT_FOUND, StatusCode::BAD_GATEWAY),
+        (StatusCode::INTERNAL_SERVER_ERROR, StatusCode::BAD_GATEWAY),
+    ] {
+        *mock.state.status.lock().unwrap() = upstream;
+        assert_eq!(
+            client
+                .post(format!("{base}/api/notifications/episode:1/test"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            expected
+        );
+        let after: String = sqlx::query_scalar("SELECT json_object('state', state, 'attempted_at', attempted_at, 'sent_at', sent_at) FROM notifications WHERE key = 'episode:1'")
+            .fetch_one(fixture.db.pool()).await.unwrap();
+        assert_eq!(before, after);
+        let covered: i64 = sqlx::query_scalar("SELECT count(*) FROM covered_episodes")
+            .fetch_one(fixture.db.pool())
+            .await
+            .unwrap();
+        assert_eq!(covered, 0);
+        assert!(service.health.read().await.last_delivery_at.is_none());
+    }
+    assert_eq!(
+        client
+            .post(format!("{base}/api/notifications/episode:999/test"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(mock.state.requests.load(Ordering::Relaxed), 4);
+    *mock.state.status.lock().unwrap() = StatusCode::OK;
+    service.delivery_step().await.unwrap();
+    assert_eq!(mock.state.requests.load(Ordering::Relaxed), 5);
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM notifications WHERE key = 'episode:1'")
+            .fetch_one(fixture.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(state, "sent");
+    let messages = mock.state.messages.lock().unwrap();
+    assert_eq!(messages[0]["content"], messages[4]["content"]);
+    task.abort();
+}
+
+#[tokio::test]
+async fn defaults_preserve_explicit_choices_and_apply_to_new_and_reset_shows() {
+    let fixture = TestDb::new().await;
+    let db = &fixture.db;
+    db.sync_shows(&[(1, "Inherited".into()), (2, "Explicit".into())])
+        .await
+        .unwrap();
+    // Selecting the current default still expresses an explicit preference.
+    db.set_show_mode(2, NotificationMode::Episode)
+        .await
+        .unwrap();
+    db.set_excluded(1, true).await.unwrap();
+    db.set_default_mode(NotificationMode::Season).await.unwrap();
+    db.sync_shows(&[
+        (1, "Inherited".into()),
+        (2, "Explicit".into()),
+        (3, "New".into()),
+    ])
+    .await
+    .unwrap();
+    let shows = db.shows().await.unwrap();
+    for id in [1, 3] {
+        let show = shows.iter().find(|s| s.id == id).unwrap();
+        assert_eq!(show.mode, NotificationMode::Season);
+        assert!(!show.mode_overridden);
+    }
+    let explicit = shows.iter().find(|s| s.id == 2).unwrap();
+    assert_eq!(explicit.mode, NotificationMode::Episode);
+    assert!(explicit.mode_overridden);
+    assert!(shows.iter().find(|s| s.id == 1).unwrap().excluded);
+    assert!(db.reset_show_mode(2).await.unwrap());
+    assert!(!db.reset_show_mode(999).await.unwrap());
+    assert_eq!(
+        db.shows()
+            .await
+            .unwrap()
+            .iter()
+            .find(|s| s.id == 2)
+            .unwrap()
+            .mode,
+        NotificationMode::Season
+    );
+    db.set_default_mode(NotificationMode::Episode)
+        .await
+        .unwrap();
+    assert!(
+        db.shows()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.mode == NotificationMode::Episode && !s.mode_overridden)
+    );
+    let reopened = Database::connect(fixture.path.to_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        reopened.default_mode().await.unwrap(),
+        NotificationMode::Episode
+    );
+}
+
+#[tokio::test]
+async fn reset_all_modes_includes_inactive_shows_and_restores_inheritance() {
+    let fixture = TestDb::new().await;
+    let db = &fixture.db;
+    db.sync_shows(&[(1, "Active".into()), (2, "Removed".into())])
+        .await
+        .unwrap();
+    db.set_show_mode(1, NotificationMode::Episode)
+        .await
+        .unwrap();
+    db.set_show_mode(2, NotificationMode::Episode)
+        .await
+        .unwrap();
+    db.set_excluded(2, true).await.unwrap();
+    db.sync_shows(&[(1, "Active".into())]).await.unwrap();
+    db.reset_all_show_modes(NotificationMode::Season)
+        .await
+        .unwrap();
+    let reopened = Database::connect(fixture.path.to_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        reopened.default_mode().await.unwrap(),
+        NotificationMode::Season
+    );
+    let shows = reopened.shows().await.unwrap();
+    assert!(
+        shows
+            .iter()
+            .all(|s| s.mode == NotificationMode::Season && !s.mode_overridden)
+    );
+    let removed = shows.iter().find(|s| s.id == 2).unwrap();
+    assert!(!removed.active);
+    assert!(removed.excluded);
+    reopened
+        .set_default_mode(NotificationMode::Episode)
+        .await
+        .unwrap();
+    assert!(
+        reopened
+            .shows()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.mode == NotificationMode::Episode && !s.mode_overridden)
+    );
 }

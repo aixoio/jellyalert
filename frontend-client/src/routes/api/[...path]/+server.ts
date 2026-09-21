@@ -6,10 +6,10 @@ import type { RequestHandler } from './$types';
 const proxy: RequestHandler = async ({ params, request, url, fetch }) => {
 	const path = params.path;
 	const allowed = request.method === 'GET'
-		? (['health', 'shows', 'notifications'].includes(path) || /^shows\/[1-9]\d*\/poster$/.test(path))
+		? (['health', 'shows', 'notifications', 'settings'].includes(path) || /^shows\/[1-9]\d*\/poster$/.test(path))
 		: request.method === 'PUT'
-			? /^shows\/[1-9]\d*\/(exclusion|mode)$/.test(path)
-			: request.method === 'POST' && path === 'webhook/resume';
+			? ['settings', 'settings/reset-all'].includes(path) || /^shows\/[1-9]\d*\/(exclusion|mode)$/.test(path)
+			: request.method === 'POST' && (path === 'webhook/resume' || /^notifications\/(episode:\d+|season:\d+:\d+)\/test$/.test(path));
 	if (!allowed) return json({ error: 'Unknown API endpoint.' }, { status: 404 });
 	if (request.method !== 'GET' && request.headers.get('origin') !== url.origin) {
 		return json({ error: 'Use Jelly Alert to make this change.' }, { status: 403 });

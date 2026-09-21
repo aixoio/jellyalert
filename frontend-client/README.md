@@ -40,3 +40,7 @@ pnpm preview --host 0.0.0.0
 The existing `adapter-auto` is retained. `pnpm preview` previews the production build; it is not a production process supervisor. For a persistent standalone Node deployment, select `@sveltejs/adapter-node` and a supervisor (that additional package has not been installed). A server runtime is required for the `/api` proxy; this client is not a static export.
 
 References: [SvelteKit routing](https://svelte.dev/docs/kit/routing), [Svelte runes](https://svelte.dev/docs/svelte/what-are-runes), [DaisyUI SvelteKit setup](https://daisyui.com/docs/install/sveltekit/).
+
+- **Settings:** choose episode or full-season notifications for all shows using the default, including new shows. Individual choices are preserved. Use “Use default” on a show to restore inheritance. Existing shows are preserved as individual choices during upgrade.
+
+“Reset all to default” on Settings asks for confirmation, then saves the selected default and removes all individual notification overrides, including inactive and excluded shows. Exclusions remain unchanged.

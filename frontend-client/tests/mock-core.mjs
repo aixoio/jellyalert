@@ -5,10 +5,12 @@ export function mockCore() {
 	const now = Math.floor(Date.now() / 1000);
 	const state = {
 		paused: true,
+		mode: 'episode',
 		requests: [],
 		shows: Array.from({ length: 26 }, (_, index) => ({
 			id: index + 1,
 			mode: 'episode',
+			mode_overridden: false,
 			title: index === 0 ? 'The Last Lighthouse' : `Test show ${String(index + 1).padStart(2, '0')}`,
 			excluded: index === 1,
 			active: index !== 25
@@ -23,13 +25,25 @@ export function mockCore() {
 		};
 		let body = '';
 		for await (const chunk of request) body += chunk;
+        if (['/api/settings', '/api/settings/reset-all'].includes(url.pathname)) {
+            if (request.method === 'GET') return send(200, { mode: state.mode });
+            const input = JSON.parse(body);
+            if (!['episode', 'season'].includes(input.mode)) return send(422);
+            state.mode = input.mode;
+            for (const show of state.shows) {
+                if (url.pathname.endsWith('/reset-all')) show.mode_overridden = false;
+                if (!show.mode_overridden) show.mode = state.mode;
+            }
+            return send(204);
+        }
         const modeRoute = url.pathname.match(/^\/api\/shows\/(\d+)\/mode$/);
         if (modeRoute && request.method === 'PUT') {
             const show = state.shows.find((show) => show.id === Number(modeRoute[1]));
             if (!show) return send(404, { error: 'Show not found.' });
             const input = JSON.parse(body);
-            if (!['episode', 'season'].includes(input.mode)) return send(422, { error: 'Invalid mode.' });
-            show.mode = input.mode;
+            if (!['episode', 'season', 'default'].includes(input.mode)) return send(422, { error: 'Invalid mode.' });
+            show.mode_overridden = input.mode !== 'default';
+            show.mode = show.mode_overridden ? input.mode : state.mode;
             return send(204);
         }
 		if (url.pathname === '/api/shows/1/poster') {
@@ -48,6 +62,7 @@ export function mockCore() {
 			worker: { last_scan_at: now, last_scan_succeeded: true, last_delivery_at: now - 60 },
 			webhook_disabled: state.paused, webhook_retry_at: 0, tracking_since: now - 86400, unresolved_deliveries: 1
 		});
+		if (request.method === 'POST' && url.pathname === '/api/notifications/episode:1/test') return send(204);
 		if (url.pathname === '/api/webhook/resume') { state.paused = false; return send(204); }
 		if (url.pathname === '/api/notifications') {
 			const history = url.searchParams.get('view') === 'history';

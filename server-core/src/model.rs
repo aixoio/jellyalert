@@ -31,6 +31,7 @@ impl TryFrom<&str> for NotificationMode {
 
 #[derive(Debug, Serialize)]
 pub struct Show {
+    pub mode_overridden: bool,
     pub id: i64,
     pub title: String,
     pub excluded: bool,
