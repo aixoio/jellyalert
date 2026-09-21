@@ -67,8 +67,8 @@
 		try {
 			const [nextHealth, nextShows, nextNotifications, nextColors] = await Promise.all([
 				section === 'overview' ? api<Health>('health') : Promise.resolve(null),
-				section !== 'overview' ? api<Show[]>('shows') : Promise.resolve([]),
-				section === 'activity' ? api<Notification[]>(`notifications?limit=${pageSize + 1}&offset=${pageOffset}&view=${view}`) : Promise.resolve([]),
+				api<Show[]>('shows'),
+				section === 'overview' ? api<Notification[]>('notifications?limit=6&offset=0&view=upcoming') : section === 'activity' ? api<Notification[]>(`notifications?limit=${pageSize + 1}&offset=${pageOffset}&view=${view}`) : Promise.resolve([]),
 				section === 'activity' ? api<EmbedColors>('settings/colors') : Promise.resolve(colors)
 			]);
 			if (!alive) return;
@@ -164,16 +164,32 @@
 		<div class="grid min-w-0 grid-cols-1 gap-6">
 			{#if section === 'overview' && health}
 			<div class="grid min-w-0 grid-cols-1 items-start gap-6 xl:grid-cols-2">
-                <section class="card card-border">
-                    <div class="card-body">
-                        <h2 class="card-title">Your shows, your schedule</h2>
-                        <p>Choose every episode or full seasons on the Shows page. Changes save immediately and only affect that show.</p>
-                        <p><strong>Every episode:</strong> an alert at each missing episode’s air time.</p>
-                        <p><strong>Full seasons:</strong> one alert when the complete season has aired and episodes are missing. Sonarr must confirm season completion.</p>
-                        <p>New shows start with episode alerts. Turn tracking off to exclude a show entirely.</p>
-                        <p>Air times come from Sonarr and do not confirm that a download is available.</p>
-                        <div class="card-actions"><a class="btn btn-primary" href="/shows">Manage shows</a><a class="btn btn-outline" href="/activity">View activity</a></div>
+                <section class="card card-border min-w-0" aria-labelledby="upcoming-heading">
+                    <div class="card-body gap-2">
+                        <div class="flex flex-wrap items-center justify-between gap-2"><h2 id="upcoming-heading" class="card-title">Alerts coming up</h2><a class="btn btn-ghost btn-sm" href="/activity">View all →</a></div>
+                        <p class="text-sm text-base-content/60">Next six alerts by listed air time · your local time</p>
                     </div>
+                    {#if notifications.length}
+                        <ul class="list">
+                            {#each notifications as notification (notification.key)}
+                                {@const title = shows.find((show) => show.id === notification.series_id)?.title ?? `Show ${notification.series_id}`}
+                                <li class="list-row">
+                                    <a href={`/shows/${notification.series_id}`} aria-label={`View ${title} progress`}><ShowPoster id={notification.series_id} compact /></a>
+                                    <div class="list-col-grow min-w-0">
+                                        <a class="link link-hover font-semibold wrap-anywhere" href={`/shows/${notification.series_id}`}>{title}</a>
+                                        <p class="text-xs text-base-content/60">Season {notification.season} · {notification.mode === 'season' ? 'Full season' : 'Episode'}</p>
+                                        <p class="mt-2 text-sm"><Time value={notification.due_at} /></p>
+                                        {#if notification.awaiting_confirmation}<p class="mt-1 text-xs text-warning">Awaiting finale confirmation · time is provisional</p>{/if}
+                                    </div>
+                                </li>
+                            {/each}
+                        </ul>
+                    {:else}
+                        <div class="card-body pt-0">
+                            <p>No alerts scheduled yet. Eligible missing episodes appear after a Sonarr scan.</p>
+                            <div class="card-actions"><a class="btn btn-sm" href="/shows">Manage shows</a></div>
+                        </div>
+                    {/if}
                 </section>
 
 				<aside id="status" class="card card-border" aria-labelledby="status-heading">
