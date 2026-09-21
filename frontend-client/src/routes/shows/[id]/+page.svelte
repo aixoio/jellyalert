@@ -102,7 +102,7 @@
 					<summary class="season-summary"><strong>{season.number ? `Season ${season.number}` : 'Specials'}</strong><span>{season.counts.aired} / {season.counts.total} aired · {season.counts.in_library} in library</span></summary>
 					<div class="card-body">
 						{@render progress(season.counts, `Season ${season.number}`)}
-						{#if season.completion_confirmed}<p>{season.final_air_at !== null && season.final_air_at <= now ? 'All listed episodes have aired.' : 'Confirmed final scheduled air time:'} <Time value={season.final_air_at} /></p>
+						{#if season.completion_confirmed}<p>{season.final_air_at !== null && season.final_air_at <= now ? 'All listed episodes have aired.' : 'Confirmed final scheduled air time:'} <Time value={season.final_air_at} />{#if season.final_air_at !== null && season.final_air_at > now} · {remaining(season.final_air_at)}{/if}</p>
 						{:else if season.number > 0}<p>Season completion is unconfirmed.{season.counts.undated ? ` ${season.counts.undated} episode(s) still need air dates.` : ' Sonarr may still add or update episodes.'}</p>
 						{:else}<p>Specials have no season completion boundary. They can receive individual episode alerts in episode mode.</p>{/if}
 						{#if season.notification}<p>{season.notification.episodes_remaining} listed episode(s) still to air before {season.notification.episode !== null ? `episode ${season.notification.episode}’s alert` : 'the season alert'}{season.notification.awaiting_confirmation ? '; finale confirmation also required.' : '.'}</p>{/if}

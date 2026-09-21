@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::{
-    model::{NotificationMode, Show},
+    model::{EmbedColors, NotificationMode, Show},
     service::Service,
 };
 
@@ -25,6 +25,10 @@ pub fn router(service: Service) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/settings", get(settings).put(update_settings))
+        .route(
+            "/api/settings/colors",
+            get(embed_colors).put(update_embed_colors),
+        )
         .route("/api/settings/reset-all", put(reset_all_modes))
         .route("/api/shows/{id}/mode", put(update_show_mode))
         .route("/api/shows", get(shows))
@@ -87,6 +91,28 @@ async fn update_settings(
     state.service.db.set_default_mode(settings.mode).await?;
     state.service.wake.notify_one();
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn embed_colors(State(state): State<ApiState>) -> ApiResult<EmbedColors> {
+    Ok(Json(state.service.db.embed_colors().await?))
+}
+
+async fn update_embed_colors(
+    State(state): State<ApiState>,
+    Json(colors): Json<EmbedColors>,
+) -> Result<Response, ApiError> {
+    if colors.episode_color > 0xffffff || colors.season_color > 0xffffff {
+        return Ok((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ErrorBody {
+                error: "Colors must be RGB integers between 0 and 16777215.",
+            }),
+        )
+            .into_response());
+    }
+    let _guard = state.service.delivery_gate.lock().await;
+    state.service.db.set_embed_colors(colors).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 async fn reset_all_modes(

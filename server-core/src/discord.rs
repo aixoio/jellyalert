@@ -65,19 +65,20 @@ impl Discord {
     }
 
     pub async fn send(&self, content: &str) -> anyhow::Result<Delivery> {
-        self.send_with_poster(content, None).await
+        self.send_with_poster(content, None, 0x5865f2).await
     }
 
     pub async fn send_with_poster(
         &self,
         content: &str,
         poster: Option<Vec<u8>>,
+        color: u32,
     ) -> anyhow::Result<Delivery> {
         let body = serde_json::to_string(&Message {
             embeds: [Embed {
                 author: Author { name: "Jelly Name" },
                 description: content,
-                color: 0x5865f2,
+                color,
                 image: poster.as_ref().map(|_| EmbedImage {
                     url: "attachment://series.jpg",
                 }),

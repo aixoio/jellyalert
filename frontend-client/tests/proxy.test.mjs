@@ -60,6 +60,16 @@ test('same-origin client bridge forwards API controls and handles failures', { t
 	assert.equal(mock.state.shows[0].mode_overridden, false);
 	assert.equal((await put('settings', { mode: 'season' }, 'https://other.example')).status, 403);
 	assert.equal((await fetch(`${base}/settings`)).status, 200);
+    const colors = { episode_color: 0, season_color: 0xffffff };
+    assert.equal((await put('settings/colors', colors)).status, 204);
+    assert.deepEqual(await (await fetch(`${base}/api/settings/colors`)).json(), colors);
+    assert.equal((await put('settings/colors', colors, 'https://other.example')).status, 403);
+    assert.equal((await put('settings/colors', { ...colors, episode_color: -1 })).status, 422);
+	assert.equal((await fetch(`${base}/shows/1`)).status, 200);
+	const detail = await (await fetch(`${base}/api/shows/1`)).json();
+	assert.equal(detail.next_notification.awaiting_confirmation, true);
+	assert.equal(detail.counts.aired, 1);
+	assert.equal((await fetch(`${base}/api/shows/999`)).status, 404);
 	assert.equal((await put('shows/1/mode', { mode: 'episode' })).status, 204);
 	assert.equal((await put('settings/reset-all', { mode: 'season' }, 'https://other.example')).status, 403);
 	assert.equal(mock.state.shows[0].mode_overridden, true);

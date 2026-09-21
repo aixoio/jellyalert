@@ -176,7 +176,7 @@ async fn migrations_restart_and_deduplication() {
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(count, 4);
+    assert_eq!(count, 5);
     reopened.pool().close().await;
 }
 
@@ -1337,5 +1337,283 @@ async fn test_notifications_send_embeds_when_series_artwork_is_unavailable() {
     for message in messages.iter() {
         assert_eq!(message["embeds"][0]["author"]["name"], "Jelly Name");
         assert!(message["embeds"][0].get("image").is_none());
+    }
+}
+
+#[test]
+fn series_progress_distinguishes_airing_library_and_unconfirmed_seasons() {
+    use std::collections::{HashMap, HashSet};
+    let make_show = || server_core::model::Show {
+        id: 1,
+        title: "Game Changer".into(),
+        active: true,
+        excluded: false,
+        mode: NotificationMode::Season,
+        mode_overridden: false,
+    };
+    let mut episodes = vec![episode(1, 1, 100), episode(2, 2, 200), episode(3, 3, 300)];
+    episodes[0].has_file = true;
+    let covered = HashSet::new();
+    let deliveries = HashMap::new();
+    let result = server_core::progress::build(
+        make_show(),
+        &series(),
+        &episodes,
+        0,
+        150,
+        &covered,
+        &deliveries,
+        false,
+        0,
+    );
+    assert_eq!(result.counts.aired, 1);
+    assert_eq!(result.counts.in_library, 1);
+    assert_eq!(result.next_release.unwrap().episode, 2);
+    let notification = result.next_notification.unwrap();
+    assert_eq!(notification.episodes_remaining, 2);
+    assert!(notification.awaiting_confirmation);
+    assert!(!result.seasons[0].completion_confirmed);
+    assert!(result.seasons[0].final_air_at.is_none());
+    episodes[2].finale_type = Some(FinaleType::Season);
+    let result = server_core::progress::build(
+        make_show(),
+        &series(),
+        &episodes,
+        0,
+        250,
+        &covered,
+        &deliveries,
+        false,
+        0,
+    );
+    assert_eq!(result.next_notification.unwrap().episodes_remaining, 1);
+    assert!(result.seasons[0].completion_confirmed);
+    assert_eq!(result.seasons[0].final_air_at, Some(300));
+    // Unknown dates must not turn into an invented completion time.
+    episodes[1].air_date_utc = None;
+    let result = server_core::progress::build(
+        make_show(),
+        &series(),
+        &episodes,
+        0,
+        250,
+        &covered,
+        &deliveries,
+        false,
+        0,
+    );
+    assert_eq!(result.counts.undated, 1);
+    assert!(result.next_notification.is_none());
+    assert!(!result.seasons[0].completion_confirmed);
+}
+
+#[test]
+fn series_progress_respects_notification_history_policy_and_specials() {
+    use std::collections::{HashMap, HashSet};
+    let mut show = server_core::model::Show {
+        id: 1,
+        title: "Show".into(),
+        active: true,
+        excluded: false,
+        mode: NotificationMode::Episode,
+        mode_overridden: false,
+    };
+    let mut episodes = vec![episode(1, 1, 100), episode(2, 2, 200), episode(3, 1, 300)];
+    episodes[2].season_number = 0;
+    let mut covered = HashSet::from([1]);
+    let deliveries = HashMap::from([("episode:2".into(), "uncertain".into())]);
+    let result = server_core::progress::build(
+        show,
+        &series(),
+        &episodes,
+        0,
+        50,
+        &covered,
+        &deliveries,
+        false,
+        0,
+    );
+    assert_eq!(result.counts.total, 2); // Specials are separate.
+    assert_eq!(result.next_notification.unwrap().season, 0);
+    covered.insert(3);
+    show = server_core::model::Show {
+        id: 1,
+        title: "Show".into(),
+        active: true,
+        excluded: true,
+        mode: NotificationMode::Episode,
+        mode_overridden: false,
+    };
+    let result = server_core::progress::build(
+        show,
+        &series(),
+        &episodes,
+        0,
+        50,
+        &covered,
+        &deliveries,
+        false,
+        0,
+    );
+    assert!(result.next_notification.is_none());
+    assert!(result.notification_block.unwrap().contains("excluded"));
+}
+
+#[tokio::test]
+async fn series_progress_api_is_read_only_and_reports_upstream_failure() {
+    let fixture = TestDb::new().await;
+    let mock = mock_server().await;
+    fixture
+        .db
+        .sync_shows(&[(1, "Test Show".into())])
+        .await
+        .unwrap();
+    *mock.state.episodes.lock().unwrap() = episode_json(Utc::now().timestamp() + 3600, false);
+    let router = api::router(service(fixture.db.clone(), &mock));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let body = reqwest::get(format!("{base}/api/shows/1"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let result: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(result["counts"]["total"], 1);
+    assert_eq!(result["next_notification"]["episodes_remaining"], 1);
+    assert_eq!(result["next_release"]["episode"], 1);
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM notifications")
+        .fetch_one(fixture.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    assert_eq!(mock.state.requests.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        reqwest::get(format!("{base}/api/shows/999"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    *mock.state.fail_sonarr.lock().unwrap() = true;
+    assert_eq!(
+        reqwest::get(format!("{base}/api/shows/1"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_GATEWAY
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn embed_colors_persist_validate_and_apply_to_both_delivery_modes() {
+    for (mode, key, expected) in [
+        (NotificationMode::Episode, "episode:1", 0),
+        (NotificationMode::Season, "season:1:1", 0xffffff),
+    ] {
+        let fixture = TestDb::new().await;
+        let mock = mock_server().await;
+        let mut episodes = episode_json(Utc::now().timestamp() - 1, false);
+        episodes[0]["finaleType"] = json!("season");
+        *mock.state.episodes.lock().unwrap() = episodes;
+        let service = service(fixture.db.clone(), &mock);
+        service.scan().await.unwrap();
+        fixture.db.set_show_mode(1, mode).await.unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!(
+            "http://{}/api/settings/colors",
+            listener.local_addr().unwrap()
+        );
+        let router = api::router(service.clone());
+        let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = reqwest::Client::new();
+        let defaults: Value = serde_json::from_slice(
+            &client
+                .get(&url)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            defaults,
+            json!({"episode_color": 0x5865f2, "season_color": 0xf1c40f})
+        );
+        let colors = json!({"episode_color": 0, "season_color": 0xffffff});
+        assert_eq!(
+            client
+                .put(&url)
+                .header("content-type", "application/json")
+                .body(colors.to_string())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+        for invalid in [
+            json!({"episode_color": -1, "season_color": 5}),
+            json!({"episode_color": 5, "season_color": 0x1000000}),
+            json!({"episode_color": "#ffffff", "season_color": 5}),
+            json!({"episode_color": 1.5, "season_color": 5}),
+            json!({"episode_color": 5}),
+        ] {
+            assert_eq!(
+                client
+                    .put(&url)
+                    .header("content-type", "application/json")
+                    .body(invalid.to_string())
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::UNPROCESSABLE_ENTITY
+            );
+        }
+        assert_eq!(
+            serde_json::from_slice::<Value>(
+                &client
+                    .get(&url)
+                    .send()
+                    .await
+                    .unwrap()
+                    .bytes()
+                    .await
+                    .unwrap()
+            )
+            .unwrap(),
+            colors
+        );
+        fixture
+            .db
+            .set_default_mode(NotificationMode::Season)
+            .await
+            .unwrap();
+        fixture.db.reset_all_show_modes(mode).await.unwrap();
+        let reopened = Database::connect(fixture.path.to_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            reopened.embed_colors().await.unwrap().for_mode(mode),
+            expected
+        );
+        assert_eq!(
+            service.test_notification(key).await.unwrap(),
+            Some(Delivery::Sent)
+        );
+        service.delivery_step().await.unwrap();
+        let messages = mock.state.messages.lock().unwrap();
+        assert_eq!(messages.len(), 2);
+        for message in messages.iter() {
+            assert_eq!(message["embeds"][0]["color"], expected);
+        }
+        task.abort();
     }
 }

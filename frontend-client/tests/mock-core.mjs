@@ -5,6 +5,7 @@ export function mockCore() {
 	const now = Math.floor(Date.now() / 1000);
 	const state = {
 		paused: true,
+        colors: { episode_color: 0x5865f2, season_color: 0xf1c40f },
 		mode: 'episode',
 		requests: [],
 		shows: Array.from({ length: 26 }, (_, index) => ({
@@ -25,6 +26,13 @@ export function mockCore() {
 		};
 		let body = '';
 		for await (const chunk of request) body += chunk;
+        if (url.pathname === '/api/settings/colors') {
+            if (request.method === 'GET') return send(200, state.colors);
+            const colors = JSON.parse(body);
+            if (![colors.episode_color, colors.season_color].every((color) => Number.isInteger(color) && color >= 0 && color <= 0xffffff)) return send(422);
+            state.colors = colors;
+            return send(204);
+        }
         if (['/api/settings', '/api/settings/reset-all'].includes(url.pathname)) {
             if (request.method === 'GET') return send(200, { mode: state.mode });
             const input = JSON.parse(body);
@@ -50,6 +58,20 @@ export function mockCore() {
 			response.writeHead(200, { 'content-type': 'image/jpeg' });
 			return response.end(Buffer.from([255, 216, 255, 217]));
 		}
+        const detailRoute = url.pathname.match(/^\/api\/shows\/(\d+)$/);
+        if (detailRoute) {
+            const show = state.shows.find((s) => s.id === Number(detailRoute[1]));
+            if (!show) return send(404, { error: 'Show not found.' });
+            const counts = { total: 2, aired: 1, in_library: 1, undated: 0 };
+            const notification = { season: 1, episode: null, due_at: now + 3600, awaiting_confirmation: true, episodes_remaining: 1 };
+            return send(200, { show, status: 'continuing', monitored: true, as_of: now, tracking_since: now - 86400,
+                counts, notification_block: null, next_notification: notification,
+                next_release: { season: 1, episode: 2, title: 'The next round', air_at: now + 3600 },
+                seasons: [{ number: 1, counts, completion_confirmed: false, final_air_at: null, notification,
+                    episodes: [{ id: 1, number: 1, title: 'Pilot', air_at: now - 86400, has_file: true, monitored: true, notified: false },
+                        { id: 2, number: 2, title: 'The next round', air_at: now + 3600, has_file: false, monitored: true, notified: false }] }]
+            });
+        }
 		if (url.pathname === '/api/shows') return send(200, state.shows);
 		const exclusion = url.pathname.match(/^\/api\/shows\/(\d+)\/exclusion$/);
 		if (exclusion) {

@@ -44,15 +44,21 @@ impl Service {
     /// Test outcomes never change normal delivery state or worker health.
     pub async fn test_notification(&self, key: &str) -> anyhow::Result<Option<Delivery>> {
         let _guard = self.delivery_gate.lock().await;
-        let content: Option<(String, i64)> =
-            sqlx::query_as("SELECT content, series_id FROM notifications WHERE key = ?")
+        let content: Option<(String, i64, String)> =
+            sqlx::query_as("SELECT content, series_id, mode FROM notifications WHERE key = ?")
                 .bind(key)
                 .fetch_optional(self.db.pool())
                 .await?;
         match content {
-            Some((content, series_id)) => {
+            Some((content, series_id, mode)) => {
                 let poster = self.sonarr.poster(series_id).await.ok().flatten();
-                Ok(Some(self.discord.send_with_poster(&content, poster).await?))
+                let mode = crate::model::NotificationMode::try_from(mode.as_str())?;
+                let color = self.db.embed_colors().await?.for_mode(mode);
+                Ok(Some(
+                    self.discord
+                        .send_with_poster(&content, poster, color)
+                        .await?,
+                ))
             }
             None => Ok(None),
         }
@@ -191,10 +197,14 @@ impl Service {
         };
         let poster = self.sonarr.poster(series_id).await.ok().flatten();
         let _guard = self.delivery_gate.lock().await;
+        let color = self.db.embed_colors().await?.for_mode(plan.mode);
         if !self.db.claim(plan, Utc::now().timestamp()).await? {
             return Ok(Duration::ZERO);
         }
-        let delivery = self.discord.send_with_poster(&plan.content, poster).await?;
+        let delivery = self
+            .discord
+            .send_with_poster(&plan.content, poster, color)
+            .await?;
         let finished = Utc::now().timestamp();
         match delivery {
             Delivery::Sent => {

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, errorMessage, type Health, type Notification, type Show, type DeliveryState } from '$lib/api';
+	import { api, errorMessage, colorHex, type EmbedColors, type Health, type Notification, type Show, type DeliveryState } from '$lib/api';
 	import Time from '$lib/Time.svelte';
 	import ShowPoster from '$lib/ShowPoster.svelte';
 
@@ -8,6 +8,7 @@
 	const titles = { overview: 'Overview', shows: 'Shows', activity: 'Activity' };
 	const descriptions = { overview: 'Check your connection and keep Discord alerts running.', shows: 'Choose what to track and when each show should notify you.', activity: 'Follow upcoming alerts and review delivery history.' };
 
+	let colors = $state<EmbedColors>({ episode_color: 0x5865f2, season_color: 0xf1c40f });
 	let health = $state<Health | null>(null);
 	let shows = $state<Show[]>([]);
 	let notifications = $state<Notification[]>([]);
@@ -58,13 +59,15 @@
 		if (refreshing || busy) return;
 		refreshing = true;
 		try {
-			const [nextHealth, nextShows, nextNotifications] = await Promise.all([
+			const [nextHealth, nextShows, nextNotifications, nextColors] = await Promise.all([
 				section === 'overview' ? api<Health>('health') : Promise.resolve(null),
 				section !== 'overview' ? api<Show[]>('shows') : Promise.resolve([]),
-				section === 'activity' ? api<Notification[]>(`notifications?limit=${pageSize + 1}&offset=${pageOffset}&view=${view}`) : Promise.resolve([])
+				section === 'activity' ? api<Notification[]>(`notifications?limit=${pageSize + 1}&offset=${pageOffset}&view=${view}`) : Promise.resolve([]),
+				section === 'activity' ? api<EmbedColors>('settings/colors') : Promise.resolve(colors)
 			]);
 			if (!alive) return;
 			health = nextHealth;
+			colors = nextColors;
 			shows = nextShows;
 			notifications = nextNotifications.slice(0, pageSize);
 			hasNext = nextNotifications.length > pageSize;
@@ -242,7 +245,7 @@
                                                 <h2 class="card-title">{shows.find((show) => show.id === notification.series_id)?.title ?? `Show ${notification.series_id}`}</h2>
                                                 <details class="message-preview">
                                                     <summary>{notification.awaiting_confirmation ? 'Preview waiting notice' : 'Preview Discord embed'}</summary>
-                                                    <div class="discord-preview">
+                                                    <div class="discord-preview" style:border-left-color={colorHex(notification.mode === 'season' ? colors.season_color : colors.episode_color)}>
                                                         <strong>Jelly Name</strong>
                                                         <p>{notification.content}</p>
                                                         <ShowPoster id={notification.series_id} />

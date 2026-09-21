@@ -6,7 +6,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
-use crate::model::{NotificationMode, PlannedNotification, Show};
+use crate::model::{EmbedColors, NotificationMode, PlannedNotification, Show};
 
 #[derive(Clone)]
 pub struct Database {
@@ -63,6 +63,13 @@ impl Database {
                 include_str!("../migrations/202609210002_season_confirmation.sql").into_sql_str(),
                 false,
             ),
+            Migration::new(
+                202609210003,
+                "embed colors".into(),
+                MigrationType::Simple,
+                include_str!("../migrations/202609210003_embed_colors.sql").into_sql_str(),
+                false,
+            ),
         ])
         .run(&self.pool)
         .await?;
@@ -86,6 +93,30 @@ impl Database {
                 .rows_affected()
                 == 1,
         )
+    }
+
+    pub async fn embed_colors(&self) -> anyhow::Result<EmbedColors> {
+        let (episode_color, season_color): (u32, u32) =
+            sqlx::query_as("SELECT episode_color, season_color FROM settings WHERE id = 1")
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(EmbedColors {
+            episode_color,
+            season_color,
+        })
+    }
+
+    pub async fn set_embed_colors(&self, colors: EmbedColors) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            colors.episode_color <= 0xffffff && colors.season_color <= 0xffffff,
+            "invalid embed color"
+        );
+        sqlx::query("UPDATE settings SET episode_color = ?, season_color = ? WHERE id = 1")
+            .bind(colors.episode_color)
+            .bind(colors.season_color)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn default_mode(&self) -> anyhow::Result<NotificationMode> {

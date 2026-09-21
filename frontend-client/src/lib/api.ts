@@ -49,3 +49,6 @@ export interface SeriesProgress {
 		episodes: { id: number; number: number; title: string; air_at: number | null; has_file: boolean; monitored: boolean; notified: boolean }[];
 	}[];
 }
+
+export interface EmbedColors { episode_color: number; season_color: number }
+export const colorHex = (color: number) => '#' + color.toString(16).padStart(6, '0');

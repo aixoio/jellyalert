@@ -51,3 +51,19 @@ pub struct PlannedNotification {
     pub content: String,
     pub episode_ids: Vec<i64>,
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmbedColors {
+    pub episode_color: u32,
+    pub season_color: u32,
+}
+
+impl EmbedColors {
+    pub fn for_mode(self, mode: NotificationMode) -> u32 {
+        match mode {
+            NotificationMode::Episode => self.episode_color,
+            NotificationMode::Season => self.season_color,
+        }
+    }
+}
