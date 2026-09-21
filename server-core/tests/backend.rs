@@ -293,6 +293,20 @@ async fn rate_limits_release_reservation_and_survive_rescans() {
 }
 
 #[tokio::test]
+async fn verification_backoff_survives_rescans() {
+    let fixture = TestDb::new().await;
+    let db = &fixture.db;
+    db.sync_shows(&[(1, "Show".into())]).await.unwrap();
+    let plans = plan(&series(), &[episode(1, 1, 100)], 0);
+    db.replace_plans(1, &plans).await.unwrap();
+    db.defer(&plans[0].key, 200).await.unwrap();
+    db.replace_plans(1, &plans).await.unwrap();
+    assert_eq!(db.next_due().await.unwrap().unwrap().2, 200);
+    assert!(!db.claim(&plans[0], 199).await.unwrap());
+    assert!(db.claim(&plans[0], 200).await.unwrap());
+}
+
+#[tokio::test]
 async fn rescheduling_and_downloads_replace_pending_plans() {
     let fixture = TestDb::new().await;
     let db = &fixture.db;

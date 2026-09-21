@@ -145,7 +145,7 @@
 							<div><dt>Sonarr scan</dt><dd><span class="badge" class:badge-success={health.worker.last_scan_succeeded} class:badge-warning={!health.worker.last_scan_succeeded}>{health.worker.last_scan_at === null ? 'Waiting for first scan' : health.worker.last_scan_succeeded ? 'Healthy' : 'Retrying'}</span></dd></div>
 							<div><dt>Last scan</dt><dd><Time value={health.worker.last_scan_at} /></dd></div>
 							<div><dt>Discord delivery</dt><dd><span class="badge" class:badge-error={health.webhook_disabled} class:badge-warning={!health.webhook_disabled && health.webhook_retry_at > (updatedAt ?? 0)} class:badge-success={!health.webhook_disabled && health.webhook_retry_at <= (updatedAt ?? 0)}>{health.webhook_disabled ? 'Paused' : health.webhook_retry_at > (updatedAt ?? 0) ? 'Waiting to retry' : 'Ready'}</span></dd></div>
-							<div><dt>Last delivery attempt</dt><dd><Time value={health.worker.last_delivery_at} /></dd></div>
+							<div><dt>Last successful delivery</dt><dd><Time value={health.worker.last_delivery_at} /></dd></div>
 							<div><dt>Tracking since</dt><dd><Time value={health.tracking_since} /></dd></div>
 						</dl>
 						{#if health.webhook_disabled}<div class="alert alert-warning"><p>Discord rejected the webhook. Update the webhook in Server Core’s configuration and restart it, then resume notifications here.</p></div><button class="btn btn-outline" disabled={locked} onclick={() => change('resume', 'webhook/resume', 'POST', undefined, 'Discord notifications resumed.')}>{busy === 'resume' ? 'Resuming…' : 'Resume notifications'}</button>{/if}

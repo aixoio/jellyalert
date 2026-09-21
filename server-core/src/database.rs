@@ -126,14 +126,24 @@ impl Database {
         plans: &[PlannedNotification],
     ) -> anyhow::Result<()> {
         let mut tx = self.pool.begin().await?;
+        // A refresh must not bypass a backoff after a failed Sonarr verification.
+        let retries: std::collections::HashMap<String, i64> = sqlx::query_as::<_, (String, i64)>(
+            "SELECT key, retry_at FROM notifications WHERE series_id = ? AND state = 'pending'",
+        )
+        .bind(series_id)
+        .fetch_all(&mut *tx)
+        .await?
+        .into_iter()
+        .collect();
         sqlx::query("DELETE FROM notifications WHERE series_id = ? AND state = 'pending'")
             .bind(series_id)
             .execute(&mut *tx)
             .await?;
         for plan in plans {
-            sqlx::query("INSERT OR IGNORE INTO notifications (key, series_id, mode, season, episode_id, due_at, content) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            sqlx::query("INSERT OR IGNORE INTO notifications (key, series_id, mode, season, episode_id, due_at, content, retry_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(&plan.key).bind(series_id).bind(plan.mode.as_str()).bind(plan.season)
-                .bind(plan.episode_id).bind(plan.due_at).bind(&plan.content).execute(&mut *tx).await?;
+                .bind(plan.episode_id).bind(plan.due_at).bind(&plan.content)
+                .bind(retries.get(&plan.key).copied().unwrap_or(0)).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         Ok(())
