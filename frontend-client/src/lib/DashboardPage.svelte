@@ -36,6 +36,8 @@
 	let filter = $state('active');
 	let offset = $state(0);
 	let showPage = $state(0);
+	let previewDialog = $state<HTMLDialogElement>();
+	let selectedNotification = $state<Notification | null>(null);
 	let activityView = $state<'upcoming' | 'history'>('upcoming');
 	let hasNext = $state(false);
 	let alive = true;
@@ -148,7 +150,7 @@
 		</div>
 	{/if}
 	<div class="toast toast-end toast-bottom z-50 max-w-full" role="status" aria-live="polite" aria-atomic="true">
-		{#if toast}
+		{#if toast && !selectedNotification}
 			<div class="alert max-w-sm" class:alert-success={toast.ok} class:alert-warning={!toast.ok}>
 				<span>{toast.message}</span>
 				<button class="btn btn-ghost btn-sm" onclick={dismissToast} aria-label="Dismiss notification">✕</button>
@@ -202,11 +204,11 @@
                         <button class="btn btn-ghost" disabled={!query && filter === 'active'} onclick={() => { query = ''; filter = 'active'; }}>Clear filters</button>
                     </div></div>
 					{#if visibleShows.length}
-						<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+						<div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
                             {#each pagedShows as show (show.id)}
-                                <article class="card card-border card-sm min-w-0" aria-label={show.title}>
-                                    <ShowPoster id={show.id} fullWidth />
-                                    <div class="card-body">
+                                <article class="card card-side card-border card-sm min-w-0" aria-label={show.title}>
+                                    <a href={`/shows/${show.id}`} aria-label={`View ${show.title} progress`} class="relative block w-1/3 max-w-32 shrink-0 self-stretch overflow-hidden rounded-l-box"><ShowPoster id={show.id} fullWidth /></a>
+                                    <div class="card-body min-w-0">
                                         <div class="flex flex-wrap items-center justify-between gap-4"><span class="badge" class:badge-ghost={!show.active || show.excluded} class:badge-success={show.active && !show.excluded} class:badge-soft={show.active && !show.excluded}>{!show.active ? 'Removed from Sonarr' : show.excluded ? 'Excluded' : 'Tracked'}</span>{#if busy === `show:${show.id}` || busy === `mode:${show.id}`}<span class="loading loading-spinner loading-xs" aria-label="Saving"></span>{/if}</div>
                                         <h2 class="card-title wrap-anywhere"><a class="link link-hover" href={`/shows/${show.id}`} aria-label={`View ${show.title} progress`}>{show.title}</a></h2>
                                         <div class="mt-auto grid gap-3">
@@ -247,47 +249,91 @@
 
             {/if}
             {#if section === 'activity'}
-			<section id="activity" class="grid min-w-0 grid-cols-1 gap-6">
-				<div class="grid min-w-0 grid-cols-1 gap-6">
-					<div class="flex flex-wrap items-center justify-between gap-4"><div><h2 class="card-title">Notification activity</h2><p>{activityView === 'upcoming' ? 'Scheduled alerts and seasons awaiting finale confirmation, with the next listed air time first.' : 'Past delivery attempts, with the latest air time first.'}</p></div><span class="badge badge-outline">Your local time</span></div>
-					<div class="tabs tabs-box" aria-label="Activity view"><button class="tab" class:tab-active={activityView === 'upcoming'} aria-pressed={activityView === 'upcoming'} disabled={locked} onclick={() => refresh(0, 'upcoming')}>Upcoming</button><button class="tab" class:tab-active={activityView === 'history'} aria-pressed={activityView === 'history'} disabled={locked} onclick={() => refresh(0, 'history')}>Delivery history</button></div>
-					{#if notifications.length}<ol class="grid grid-cols-1 gap-4">
-                            {#each notifications as notification (notification.key)}
-                                <li class="card card-border">
-                                    <div class="card-body">
-                                        <div class="grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,13rem)]">
-                                            <div class="min-w-0 space-y-3 wrap-anywhere">
-                                                <span class="badge badge-outline">{notification.mode === 'season' ? 'Full season' : 'Episode'} · Season {notification.season}</span>
-                                                <h2 class="card-title"><a class="link link-hover" href={`/shows/${notification.series_id}`} aria-label={`View ${shows.find((show) => show.id === notification.series_id)?.title ?? `show ${notification.series_id}`} progress`}>{shows.find((show) => show.id === notification.series_id)?.title ?? `Show ${notification.series_id}`}</a></h2>
-                                                <details class="collapse collapse-arrow border border-base-300">
-                                                    <summary class="collapse-title font-semibold">{notification.awaiting_confirmation ? 'Preview waiting notice' : 'Preview Discord embed'}</summary>
-                                                    <div class="collapse-content space-y-3">
-                                                    <EmbedPreview color={colorHex(notification.mode === 'season' ? colors.season_color : colors.episode_color)}>
-                                                        <p class="whitespace-pre-wrap">{notification.content}</p>
-                                                        <ShowPoster id={notification.series_id} />
-                                                    </EmbedPreview>
-                                                    <p class="text-sm text-base-content/70">Series artwork is included when available. If artwork cannot load, the alert still sends with its text.</p>
-                                                    </div>
-                                                </details>
-                                            </div>
-                                            <dl class="grid grid-cols-1 content-start gap-4 sm:grid-cols-2 lg:grid-cols-1">
-                                                <div><dt>{notification.awaiting_confirmation ? 'Latest listed air time (not confirmed finale)' : 'Air time'}</dt><dd><Time value={notification.due_at} /></dd></div>
-                                                <div><dt>Delivery status</dt><dd><span class={`badge ${stateClasses[notification.state]}`}>{notification.awaiting_confirmation ? 'Awaiting finale confirmation' : stateLabels[notification.state]}</span></dd></div>
-                                                {#if notification.sent_at}<div><dt>Sent at</dt><dd><Time value={notification.sent_at} /></dd></div>{:else if notification.attempted_at}<div><dt>Attempted at</dt><dd><Time value={notification.attempted_at} /></dd></div>{/if}
-                                            </dl>
-                                        </div>
-                                        <div class="card-actions"><button class="btn btn-outline btn-sm" disabled={locked} onclick={() => sendTest(notification)}>{busy === `test:${notification.key}` ? 'Sending test…' : 'Send test to Discord'}</button></div>
-                                        <p class="text-sm text-base-content/70">Sends the preview to your configured Discord channel. Testing does not mark this notification as sent or remove it from normal delivery.</p>
-                                        {#if notification.state === 'uncertain' || notification.state === 'sending'}<div class="alert alert-warning"><p>Delivery could not be confirmed. This attempt will not be repeated to prevent duplicate notifications.</p></div>{/if}
-                                        {#if notification.state === 'failed'}<div class="alert alert-error"><p>Discord rejected this notification. Check Server Core’s logs for details.</p></div>{/if}
-                                        {#if notification.state === 'covered'}<p>These episodes were already covered by an earlier notification.</p>{/if}
-                                    </div>
-                                </li>
-                            {/each}
-                        </ol>{:else}<div class="grid justify-items-center gap-3 py-10 text-center"><h3 class="card-title">{offset ? 'No more notifications' : activityView === 'upcoming' ? 'Nothing scheduled yet' : 'No delivery history yet'}</h3><p>{activityView === 'upcoming' ? 'Eligible missing episodes appear after a Sonarr scan. Episodes from before tracking began are skipped.' : 'Completed delivery attempts will appear here. Each notification is sent at most once.'}</p></div>{/if}
-					<div class="flex flex-wrap items-center justify-between gap-4"><span>{notifications.length ? `Showing ${offset + 1}–${offset + notifications.length}` : 'No entries'}</span><div class="join"><button class="btn btn-sm join-item" aria-label="Previous notifications" disabled={locked || offset === 0} onclick={() => refresh(Math.max(0, offset - pageSize))}>Previous</button><button class="btn btn-sm join-item" aria-label="Next notifications" disabled={locked || !hasNext} onclick={() => refresh(offset + pageSize)}>Next</button></div></div>
-				</div>
-			</section>
+                <section id="activity" class="space-y-4" aria-label="Notification activity" aria-busy={refreshing}>
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <div class="tabs tabs-border tabs-sm" aria-label="Activity view">
+                            <button class="tab" class:tab-active={activityView === 'upcoming'} aria-pressed={activityView === 'upcoming'} disabled={locked} onclick={() => refresh(0, 'upcoming')}>Upcoming</button>
+                            <button class="tab" class:tab-active={activityView === 'history'} aria-pressed={activityView === 'history'} disabled={locked} onclick={() => refresh(0, 'history')}>Delivery history</button>
+                        </div>
+                        <span class="text-xs text-base-content/60">{activityView === 'upcoming' ? 'Next air time first' : 'Latest air time first'}</span>
+                    </div>
+                    <div class="card card-border bg-base-100">
+                        {#if notifications.length}
+                            <div class="overflow-x-auto">
+                                <table class="table table-sm">
+                                    <caption class="sr-only">{activityView === 'upcoming' ? 'Upcoming notifications, next air time first' : 'Delivery history, latest air time first'}</caption>
+                                    <thead class="bg-base-200"><tr><th scope="col">Show / alert</th><th scope="col" class="hidden sm:table-cell">Air time · local</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Details</span></th></tr></thead>
+                                    <tbody>
+                                        {#each notifications as notification (notification.key)}
+                                            {@const title = shows.find((show) => show.id === notification.series_id)?.title ?? `Show ${notification.series_id}`}
+                                            <tr class="cursor-pointer hover:bg-base-200/50" onclick={(event) => {
+                                                if ((event.target as Element).closest('a, button')) return;
+                                                selectedNotification = notification;
+                                                previewDialog?.showModal();
+                                            }}>
+                                                <td class="max-w-48 py-3 sm:max-w-sm">
+                                                    <a class="link link-hover block truncate font-semibold" href={`/shows/${notification.series_id}`} title={title}>{title}</a>
+                                                    <p class="text-xs text-base-content/60">Season {notification.season} · {notification.mode === 'season' ? 'Full season' : 'Episode'}</p>
+                                                    <p class="mt-1 text-xs text-base-content/60 sm:hidden"><Time value={notification.due_at} /></p>
+                                                </td>
+                                                <td class="hidden whitespace-nowrap text-xs tabular-nums sm:table-cell"><Time value={notification.due_at} />{#if notification.awaiting_confirmation}<p class="text-base-content/60">Finale unconfirmed</p>{/if}</td>
+                                                <td><span class={`badge badge-sm ${notification.awaiting_confirmation ? 'badge-warning badge-soft' : stateClasses[notification.state]}`}>{notification.awaiting_confirmation ? 'Awaiting finale' : stateLabels[notification.state]}</span></td>
+                                                <td class="text-right"><button class="btn btn-ghost btn-sm btn-square" aria-label={`Preview ${title} notification`} onclick={() => { selectedNotification = notification; previewDialog?.showModal(); }}><svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg></button></td>
+                                            </tr>
+                                        {/each}
+                                    </tbody>
+                                </table>
+                            </div>
+                        {:else}
+                            <div class="card-body items-center py-10 text-center">
+                                <h3 class="card-title">{offset ? 'No more notifications' : activityView === 'upcoming' ? 'Nothing scheduled yet' : 'No deliveries yet'}</h3>
+                                <p class="max-w-md text-base-content/70">{activityView === 'upcoming' ? 'Eligible missing episodes appear after a Sonarr scan. Episodes from before tracking began are skipped.' : 'Completed delivery attempts will appear here. Each notification is sent at most once.'}</p>
+                                <a class="btn btn-sm" href="/shows">Manage shows</a>
+                            </div>
+                        {/if}
+                    </div>
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <span class="text-sm text-base-content/70">{notifications.length ? `Showing ${offset + 1}–${offset + notifications.length}` : 'No entries'}</span>
+                        <nav class="join" aria-label="Activity pages">
+                            <button class="btn btn-sm join-item" aria-label="Previous notifications" disabled={locked || offset === 0} onclick={() => refresh(Math.max(0, offset - pageSize))}>«</button>
+                            <span class="btn btn-sm join-item btn-active" aria-current="page">Page {Math.floor(offset / pageSize) + 1}</span>
+                            <button class="btn btn-sm join-item" aria-label="Next notifications" disabled={locked || !hasNext} onclick={() => refresh(offset + pageSize)}>»</button>
+                        </nav>
+                    </div>
+                </section>
+                <dialog onclose={() => selectedNotification = null} bind:this={previewDialog} class="modal modal-bottom sm:modal-middle" aria-labelledby="notification-preview-title">
+                    <div class="modal-box space-y-4">
+                        {#if selectedNotification}
+                            {@const notification = selectedNotification}
+                            <div class="flex items-start justify-between gap-4">
+                                <div><p class="text-xs uppercase tracking-wider text-base-content/60">Discord notification</p><h2 id="notification-preview-title" class="text-lg font-semibold">{shows.find((show) => show.id === notification.series_id)?.title ?? `Show ${notification.series_id}`}</h2><p class="text-sm text-base-content/60">Season {notification.season} · {notification.mode === 'season' ? 'Full season' : 'Episode'}</p></div>
+                                <form method="dialog"><button class="btn btn-ghost btn-sm btn-square" aria-label="Close preview">✕</button></form>
+                            </div>
+                            <dl class="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                                <div><dt class="text-base-content/60">{notification.awaiting_confirmation ? 'Latest listed air time · finale unconfirmed' : 'Air time'}</dt><dd><Time value={notification.due_at} /></dd></div>
+                                <div><dt class="text-base-content/60">Delivery status</dt><dd>{notification.awaiting_confirmation ? 'Awaiting finale confirmation' : stateLabels[notification.state]}</dd></div>
+                                {#if notification.sent_at}<div><dt class="text-base-content/60">Sent</dt><dd><Time value={notification.sent_at} /></dd></div>{:else if notification.attempted_at}<div><dt class="text-base-content/60">Last attempt</dt><dd><Time value={notification.attempted_at} /></dd></div>{/if}
+                            </dl>
+                            {#if notification.state === 'uncertain' || notification.state === 'sending'}<div class="alert alert-warning alert-soft text-sm">Delivery could not be confirmed. This attempt will not be repeated to prevent duplicates.</div>{/if}
+                            {#if notification.state === 'failed'}<div class="alert alert-error alert-soft text-sm">Discord rejected this notification. Check Server Core’s logs for details.</div>{/if}
+                            {#if notification.state === 'covered'}<p class="text-sm text-base-content/60">These episodes were already covered by an earlier notification.</p>{/if}
+                            <EmbedPreview color={colorHex(notification.mode === 'season' ? colors.season_color : colors.episode_color)}>
+                                <p class="whitespace-pre-wrap">{notification.content}</p><ShowPoster id={notification.series_id} />
+                            </EmbedPreview>
+                            <p class="text-xs text-base-content/60">Artwork is included when available. Tests send to your configured channel without changing scheduled delivery.</p>
+                            <div class="modal-action"><button class="btn" disabled={locked} onclick={() => sendTest(notification)}>{#if busy === `test:${notification.key}`}<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>{/if}{busy === `test:${notification.key}` ? 'Sending test…' : 'Send test to Discord'}</button></div>
+                        {/if}
+                    </div>
+                    <form method="dialog" class="modal-backdrop"><button>Close preview</button></form>
+                    <div class="toast toast-end toast-bottom z-50 max-w-full" role="status" aria-live="polite" aria-atomic="true">
+                        {#if toast}
+                            <div class="alert max-w-sm" class:alert-success={toast.ok} class:alert-warning={!toast.ok}>
+                                <span>{toast.message}</span>
+                                <button class="btn btn-ghost btn-sm" onclick={dismissToast} aria-label="Dismiss notification">✕</button>
+                            </div>
+                        {/if}
+                    </div>
+                </dialog>
             {/if}
 		</div>
 	{:else}<div class="grid justify-items-center gap-3 py-10 text-center"><h2 class="card-title">Waiting for Server Core</h2><p>Start the backend on port 8090, then retry the connection.</p></div>{/if}
