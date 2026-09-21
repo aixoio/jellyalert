@@ -9,6 +9,7 @@ export interface Health {
 	unresolved_deliveries: number;
 }
 export interface Notification {
+	awaiting_confirmation: boolean;
 	key: string; series_id: number; mode: Mode; due_at: number; season: number; content: string;
 	state: DeliveryState; attempted_at: number | null; sent_at: number | null;
 }
@@ -30,3 +31,21 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
 	return response.status === 204 ? undefined as T : await response.json() as T;
 }
 export const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'The request failed. Please retry.';
+
+export interface ProgressCounts { total: number; aired: number; in_library: number; undated: number }
+export interface NextNotification {
+	season: number; episode: number | null; due_at: number;
+	awaiting_confirmation: boolean; episodes_remaining: number;
+}
+export interface SeriesProgress {
+	show: Show; status: string; monitored: boolean; as_of: number; tracking_since: number;
+	counts: ProgressCounts;
+	notification_block: string | null;
+	next_release: { season: number; episode: number; title: string; air_at: number } | null;
+	next_notification: NextNotification | null;
+	seasons: {
+		number: number; counts: ProgressCounts; completion_confirmed: boolean; final_air_at: number | null;
+		notification: NextNotification | null;
+		episodes: { id: number; number: number; title: string; air_at: number | null; has_file: boolean; monitored: boolean; notified: boolean }[];
+	}[];
+}

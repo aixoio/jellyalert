@@ -44,3 +44,7 @@ References: [SvelteKit routing](https://svelte.dev/docs/kit/routing), [Svelte ru
 - **Settings:** choose episode or full-season notifications for all shows using the default, including new shows. Individual choices are preserved. Use “Use default” on a show to restore inheritance. Existing shows are preserved as individual choices during upgrade.
 
 “Reset all to default” on Settings asks for confirmation, then saves the selected default and removes all individual notification overrides, including inactive and excluded shows. Exclusions remain unchanged.
+
+Upcoming activity includes seasons awaiting finale confirmation. These show their latest listed air time and explain why automatic delivery is blocked, rather than presenting an unconfirmed episode as the season finale.
+
+Activity message previews start collapsed. Expand **Preview Discord embed** on an individual entry to see the Jelly Name author, notification text, and matching series poster; select it again to hide the preview. Waiting seasons use **Preview waiting notice**. Expanded previews remain open during automatic refreshes while their entry remains on the page.

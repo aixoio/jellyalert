@@ -7,7 +7,7 @@ use reqwest::{
     Client, Url,
     header::{HeaderMap, HeaderValue},
 };
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,7 +18,7 @@ pub struct Series {
     pub status: SeriesStatus,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum SeriesStatus {
     Continuing,
@@ -44,7 +44,7 @@ pub struct Episode {
     pub finale_type: Option<FinaleType>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum FinaleType {
     Season,
@@ -84,6 +84,8 @@ impl Sonarr {
         let response = self
             .client
             .get(self.base.join(&format!("mediacover/{id}/poster.jpg"))?)
+            // Artwork is optional; leave time for Discord delivery within the UI timeout.
+            .timeout(Duration::from_secs(5))
             .send()
             .await
             .map_err(|e| e.without_url())?;

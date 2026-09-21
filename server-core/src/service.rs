@@ -44,13 +44,16 @@ impl Service {
     /// Test outcomes never change normal delivery state or worker health.
     pub async fn test_notification(&self, key: &str) -> anyhow::Result<Option<Delivery>> {
         let _guard = self.delivery_gate.lock().await;
-        let content: Option<String> =
-            sqlx::query_scalar("SELECT content FROM notifications WHERE key = ?")
+        let content: Option<(String, i64)> =
+            sqlx::query_as("SELECT content, series_id FROM notifications WHERE key = ?")
                 .bind(key)
                 .fetch_optional(self.db.pool())
                 .await?;
         match content {
-            Some(content) => Ok(Some(self.discord.send(&content).await?)),
+            Some((content, series_id)) => {
+                let poster = self.sonarr.poster(series_id).await.ok().flatten();
+                Ok(Some(self.discord.send_with_poster(&content, poster).await?))
+            }
             None => Ok(None),
         }
     }
@@ -186,11 +189,12 @@ impl Service {
         let Some(plan) = plans.iter().find(|plan| plan.key == key) else {
             return Ok(Duration::ZERO);
         };
+        let poster = self.sonarr.poster(series_id).await.ok().flatten();
         let _guard = self.delivery_gate.lock().await;
         if !self.db.claim(plan, Utc::now().timestamp()).await? {
             return Ok(Duration::ZERO);
         }
-        let delivery = self.discord.send(&plan.content).await?;
+        let delivery = self.discord.send_with_poster(&plan.content, poster).await?;
         let finished = Utc::now().timestamp();
         match delivery {
             Delivery::Sent => {

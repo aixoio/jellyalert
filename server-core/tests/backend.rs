@@ -8,7 +8,7 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{Query, State},
+    extract::{FromRequest, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -78,7 +78,7 @@ fn episode(id: i64, number: i64, timestamp: i64) -> Episode {
 fn season_plan(episodes: &[Episode]) -> Vec<server_core::model::PlannedNotification> {
     plan(&series(), episodes, 0)
         .into_iter()
-        .filter(|p| p.mode == NotificationMode::Season)
+        .filter(|p| p.mode == NotificationMode::Season && !p.awaiting_confirmation)
         .collect()
 }
 
@@ -176,7 +176,7 @@ async fn migrations_restart_and_deduplication() {
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(count, 3);
+    assert_eq!(count, 4);
     reopened.pool().close().await;
 }
 
@@ -385,7 +385,54 @@ async fn mock_server() -> MockServer {
             post(
                 |State(state): State<MockState>,
                  Query(query): Query<std::collections::HashMap<String, String>>,
-                 Json(message): Json<Value>| async move {
+                 request: axum::extract::Request| async move {
+                    let multipart = request
+                        .headers()
+                        .get("content-type")
+                        .and_then(|v| v.to_str().ok())
+                        .is_some_and(|v| v.starts_with("multipart/form-data"));
+                    let message: Value = if multipart {
+                        let mut form = axum::extract::Multipart::from_request(request, &())
+                            .await
+                            .unwrap();
+                        let mut payload = None;
+                        let mut image = None;
+                        while let Some(field) = form.next_field().await.unwrap() {
+                            match field.name().unwrap() {
+                                "payload_json" => {
+                                    payload = Some(
+                                        serde_json::from_str::<Value>(&field.text().await.unwrap())
+                                            .unwrap(),
+                                    )
+                                }
+                                "files[0]" => {
+                                    assert_eq!(field.file_name(), Some("series.jpg"));
+                                    assert_eq!(field.content_type(), Some("image/jpeg"));
+                                    image = Some(field.bytes().await.unwrap());
+                                }
+                                other => panic!("Unexpected multipart field: {other}"),
+                            }
+                        }
+                        assert_eq!(image.unwrap().as_ref(), &[0xff, 0xd8, 0xff, 0xd9]);
+                        let payload = payload.unwrap();
+                        assert_eq!(
+                            payload["embeds"][0]["image"]["url"],
+                            "attachment://series.jpg"
+                        );
+                        payload
+                    } else {
+                        Json::<Value>::from_request(request, &()).await.unwrap().0
+                    };
+                    assert!(message.get("content").is_none());
+                    assert_eq!(message["embeds"][0]["author"]["name"], "Jelly Name");
+                    assert!(
+                        message["embeds"][0]["description"]
+                            .as_str()
+                            .is_some_and(|text| !text.is_empty())
+                    );
+                    if !multipart {
+                        assert!(message["embeds"][0].get("image").is_none());
+                    }
                     assert_eq!(query.get("wait").unwrap(), "true");
                     state.requests.fetch_add(1, Ordering::Relaxed);
                     state.messages.lock().unwrap().push(message);
@@ -445,6 +492,10 @@ async fn worker_end_to_end_rechecks_library_and_sends_once() {
     service.delivery_step().await.unwrap();
     service.scan().await.unwrap();
     service.delivery_step().await.unwrap();
+    assert_eq!(
+        mock.state.messages.lock().unwrap()[0]["embeds"][0]["image"]["url"],
+        "attachment://series.jpg"
+    );
     assert_eq!(mock.state.requests.load(Ordering::Relaxed), 1);
     assert_eq!(
         mock.state.messages.lock().unwrap()[0]["allowed_mentions"]["parse"],
@@ -1077,7 +1128,7 @@ async fn test_sends_leave_normal_delivery_untouched() {
             .unwrap();
     assert_eq!(state, "sent");
     let messages = mock.state.messages.lock().unwrap();
-    assert_eq!(messages[0]["content"], messages[4]["content"]);
+    assert_eq!(messages[0]["embeds"], messages[4]["embeds"]);
     task.abort();
 }
 
@@ -1188,4 +1239,103 @@ async fn reset_all_modes_includes_inactive_shows_and_restores_inheritance() {
             .iter()
             .all(|s| s.mode == NotificationMode::Episode && !s.mode_overridden)
     );
+}
+
+#[tokio::test]
+async fn game_changer_unmarked_finale_is_visible_but_never_delivered_early() {
+    let fixture = TestDb::new().await;
+    let db = &fixture.db;
+    let mut show = series();
+    show.title = "Game Changer".into();
+    db.sync_shows(&[(1, show.title.clone())]).await.unwrap();
+    db.set_show_mode(1, NotificationMode::Season).await.unwrap();
+    let mut episodes: Vec<_> = (1..=10)
+        .map(|n| {
+            let mut e = episode(n, n, 100 * n);
+            e.season_number = 8;
+            e
+        })
+        .collect();
+    episodes[9].title = "TBA".into();
+    let plans = plan(&show, &episodes, 950);
+    let pending = plans
+        .iter()
+        .find(|p| p.mode == NotificationMode::Season)
+        .unwrap();
+    assert!(pending.awaiting_confirmation);
+    assert_eq!(pending.due_at, 1000);
+    assert!(pending.content.contains("awaiting finale confirmation"));
+    db.replace_plans(1, &plans).await.unwrap();
+    let mock = mock_server().await;
+    let router = api::router(service(db.clone(), &mock));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let body = reqwest::get(format!("{base}/api/notifications?view=upcoming"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let upcoming: Vec<Value> = serde_json::from_str(&body).unwrap();
+    assert_eq!(upcoming.len(), 1);
+    assert_eq!(upcoming[0]["key"], "season:1:8");
+    assert_eq!(upcoming[0]["awaiting_confirmation"], true);
+    task.abort();
+    assert!(db.next_due().await.unwrap().is_none());
+    assert!(!db.claim(pending, 2000).await.unwrap());
+    episodes[9].finale_type = Some(FinaleType::Season);
+    let confirmed = plan(&show, &episodes, 950);
+    let ready = confirmed
+        .iter()
+        .find(|p| p.mode == NotificationMode::Season)
+        .unwrap();
+    assert!(!ready.awaiting_confirmation);
+    db.replace_plans(1, &confirmed).await.unwrap();
+    assert_eq!(db.next_due().await.unwrap().unwrap().0, "season:1:8");
+    // A later metadata refresh can revoke confirmation before delivery.
+    episodes[9].finale_type = None;
+    db.replace_plans(1, &plan(&show, &episodes, 950))
+        .await
+        .unwrap();
+    assert!(!db.claim(ready, 2000).await.unwrap());
+    db.replace_plans(1, &confirmed).await.unwrap();
+    assert!(db.claim(ready, 2000).await.unwrap());
+}
+
+#[tokio::test]
+async fn test_notifications_send_embeds_when_series_artwork_is_unavailable() {
+    let fixture = TestDb::new().await;
+    let mock = mock_server().await;
+    *mock.state.episodes.lock().unwrap() = episode_json(Utc::now().timestamp() - 1, false);
+    let service = service(fixture.db.clone(), &mock);
+    service.scan().await.unwrap();
+    fixture
+        .db
+        .sync_shows(&[
+            (1, "Original".into()),
+            (2, "Invalid artwork".into()),
+            (3, "Missing artwork".into()),
+        ])
+        .await
+        .unwrap();
+    for series_id in [2_i64, 3] {
+        sqlx::query("UPDATE notifications SET series_id = ? WHERE key = 'episode:1'")
+            .bind(series_id)
+            .execute(fixture.db.pool())
+            .await
+            .unwrap();
+        assert_eq!(
+            service.test_notification("episode:1").await.unwrap(),
+            Some(Delivery::Sent)
+        );
+    }
+    let messages = mock.state.messages.lock().unwrap();
+    assert_eq!(messages.len(), 2);
+    for message in messages.iter() {
+        assert_eq!(message["embeds"][0]["author"]["name"], "Jelly Name");
+        assert!(message["embeds"][0].get("image").is_none());
+    }
 }

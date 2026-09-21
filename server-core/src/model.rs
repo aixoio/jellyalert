@@ -41,6 +41,7 @@ pub struct Show {
 
 #[derive(Debug, Clone)]
 pub struct PlannedNotification {
+    pub awaiting_confirmation: bool,
     pub key: String,
     pub series_id: i64,
     pub mode: NotificationMode,

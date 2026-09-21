@@ -23,7 +23,7 @@
 		<nav aria-label="Main navigation">
 			<ul class="menu app-menu">
 				{#each navigation as item}
-					<li><a href={item.href} class:menu-active={page.url.pathname === item.href} aria-current={page.url.pathname === item.href ? 'page' : undefined}>{item.label}</a></li>
+					<li><a href={item.href} class:menu-active={(page.url.pathname === item.href || (item.href !== '/' && page.url.pathname.startsWith(item.href + '/')))} aria-current={(page.url.pathname === item.href || (item.href !== '/' && page.url.pathname.startsWith(item.href + '/'))) ? 'page' : undefined}>{item.label}</a></li>
 				{/each}
 			</ul>
 		</nav>

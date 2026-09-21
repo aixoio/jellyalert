@@ -28,6 +28,7 @@ pub fn router(service: Service) -> Router {
         .route("/api/settings/reset-all", put(reset_all_modes))
         .route("/api/shows/{id}/mode", put(update_show_mode))
         .route("/api/shows", get(shows))
+        .route("/api/shows/{id}", get(show_progress))
         .route("/api/shows/{id}/poster", get(poster))
         .route("/api/shows/{id}/exclusion", put(exclude))
         .route("/api/notifications", get(notifications))
@@ -147,6 +148,70 @@ async fn shows(State(state): State<ApiState>) -> ApiResult<Vec<Show>> {
     Ok(Json(state.service.db.shows().await?))
 }
 
+async fn show_progress(
+    State(state): State<ApiState>,
+    Path(id): Path<i64>,
+) -> Result<Response, ApiError> {
+    let Some(show) = state
+        .service
+        .db
+        .shows()
+        .await?
+        .into_iter()
+        .find(|s| s.id == id)
+    else {
+        return Ok((
+            StatusCode::NOT_FOUND,
+            Json(ErrorBody {
+                error: "Show not found.",
+            }),
+        )
+            .into_response());
+    };
+    if !show.active {
+        return Ok((StatusCode::NOT_FOUND, Json(ErrorBody { error: "This show has been removed from Sonarr. Restore it there to view current progress." })).into_response());
+    }
+    let result = tokio::try_join!(
+        state.service.sonarr.series_by_id(id),
+        state.service.sonarr.episodes(id)
+    );
+    let (series, episodes) = match result {
+        Ok(data) if data.0.id == id => data,
+        _ => {
+            return Ok((
+                StatusCode::BAD_GATEWAY,
+                Json(ErrorBody {
+                    error: "Cannot load current series progress from Sonarr. Please retry.",
+                }),
+            )
+                .into_response());
+        }
+    };
+    let covered: Vec<i64> = sqlx::query_scalar("SELECT c.episode_id FROM covered_episodes c JOIN notifications n ON n.key = c.notification_key WHERE n.series_id = ?")
+        .bind(id).fetch_all(state.service.db.pool()).await?;
+    let deliveries: Vec<(String, String)> =
+        sqlx::query_as("SELECT key, state FROM notifications WHERE series_id = ?")
+            .bind(id)
+            .fetch_all(state.service.db.pool())
+            .await?;
+    let (disabled, retry_at): (bool, i64) =
+        sqlx::query_as("SELECT webhook_disabled, webhook_retry_at FROM settings WHERE id = 1")
+            .fetch_one(state.service.db.pool())
+            .await?;
+    let progress = crate::progress::build(
+        show,
+        &series,
+        &episodes,
+        state.service.db.tracking_since().await?,
+        chrono::Utc::now().timestamp(),
+        &covered.into_iter().collect(),
+        &deliveries.into_iter().collect(),
+        disabled,
+        retry_at,
+    );
+    Ok(Json(progress).into_response())
+}
+
 async fn poster(State(state): State<ApiState>, Path(id): Path<i64>) -> Result<Response, ApiError> {
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM shows WHERE id = ?)")
         .bind(id)
@@ -247,6 +312,7 @@ enum NotificationView {
 
 #[derive(Serialize)]
 struct Notification {
+    awaiting_confirmation: bool,
     key: String,
     series_id: i64,
     mode: NotificationMode,
@@ -289,13 +355,13 @@ async fn notifications(
 ) -> ApiResult<Vec<Notification>> {
     let query = match page.view {
         Some(NotificationView::Upcoming) => {
-            "SELECT n.key, n.series_id, n.mode, n.due_at, n.season, n.content, n.state, n.attempted_at, n.sent_at FROM notifications n JOIN shows s ON s.id = n.series_id WHERE n.state = 'pending' AND n.mode = s.mode AND s.active = 1 AND s.excluded = 0 AND (n.episode_id IS NULL OR NOT EXISTS (SELECT 1 FROM covered_episodes c WHERE c.episode_id = n.episode_id)) ORDER BY n.due_at ASC, n.key LIMIT ? OFFSET ?"
+            "SELECT n.key, n.series_id, n.mode, n.due_at, n.season, n.content, n.awaiting_confirmation, n.state, n.attempted_at, n.sent_at FROM notifications n JOIN shows s ON s.id = n.series_id WHERE n.state = 'pending' AND n.mode = s.mode AND s.active = 1 AND s.excluded = 0 AND (n.episode_id IS NULL OR NOT EXISTS (SELECT 1 FROM covered_episodes c WHERE c.episode_id = n.episode_id)) ORDER BY n.due_at ASC, n.key LIMIT ? OFFSET ?"
         }
         Some(NotificationView::History) => {
-            "SELECT key, series_id, mode, due_at, season, content, state, attempted_at, sent_at FROM notifications WHERE state <> 'pending' ORDER BY due_at DESC, key LIMIT ? OFFSET ?"
+            "SELECT key, series_id, mode, due_at, season, content, awaiting_confirmation, state, attempted_at, sent_at FROM notifications WHERE state <> 'pending' ORDER BY due_at DESC, key LIMIT ? OFFSET ?"
         }
         None => {
-            "SELECT key, series_id, mode, due_at, season, content, state, attempted_at, sent_at FROM notifications ORDER BY due_at DESC, key LIMIT ? OFFSET ?"
+            "SELECT key, series_id, mode, due_at, season, content, awaiting_confirmation, state, attempted_at, sent_at FROM notifications ORDER BY due_at DESC, key LIMIT ? OFFSET ?"
         }
     };
     let rows = sqlx::query(query)
@@ -307,6 +373,7 @@ async fn notifications(
         .iter()
         .map(|row| {
             Ok(Notification {
+                awaiting_confirmation: row.try_get("awaiting_confirmation")?,
                 key: row.try_get("key")?,
                 series_id: row.try_get("series_id")?,
                 mode: NotificationMode::try_from(row.try_get::<&str, _>("mode")?)?,

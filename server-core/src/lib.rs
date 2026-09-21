@@ -7,5 +7,6 @@ pub mod database;
 pub mod discord;
 pub mod model;
 pub mod planner;
+pub mod progress;
 pub mod service;
 pub mod sonarr;

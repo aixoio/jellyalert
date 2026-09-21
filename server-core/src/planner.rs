@@ -37,6 +37,7 @@ pub fn plan(
             continue;
         }
         plans.push(PlannedNotification {
+            awaiting_confirmation: false,
             key: format!("episode:{}", episode.id), series_id: series.id,
             mode: NotificationMode::Episode, season: episode.season_number,
             episode_id: Some(episode.id), due_at: date.timestamp(),
@@ -84,13 +85,15 @@ pub fn plan(
         });
         // Never infer a completed season merely from the last currently listed episode.
         let has_later_season = seasons.keys().any(|number| number > season);
-        if !has_finale && !has_later_season && series.status != SeriesStatus::Ended {
-            continue;
-        }
+        let awaiting_confirmation =
+            !has_finale && !has_later_season && series.status != SeriesStatus::Ended;
         plans.push(PlannedNotification {
+            awaiting_confirmation,
             key: format!("season:{}:{season}", series.id), series_id: series.id,
             mode: NotificationMode::Season, season: *season, episode_id: None, due_at,
-            content: truncate(format!("{} — Season {} has reached its final scheduled air time. {} monitored episode(s) are missing from your library. Check for downloads.", series.title, season, missing.len())),
+            content: if awaiting_confirmation {
+                truncate(format!("{} — Season {} is awaiting finale confirmation in Sonarr. The latest listed episode is not a confirmed season finale. No full-season alert will be sent until completion is confirmed.", series.title, season))
+            } else { truncate(format!("{} — Season {} has reached its final scheduled air time. {} monitored episode(s) are missing from your library. Check for downloads.", series.title, season, missing.len())) },
             episode_ids: missing,
         });
     }

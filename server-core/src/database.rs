@@ -56,6 +56,13 @@ impl Database {
                 include_str!("../migrations/202609210001_default_mode.sql").into_sql_str(),
                 false,
             ),
+            Migration::new(
+                202609210002,
+                "season confirmation".into(),
+                MigrationType::Simple,
+                include_str!("../migrations/202609210002_season_confirmation.sql").into_sql_str(),
+                false,
+            ),
         ])
         .run(&self.pool)
         .await?;
@@ -190,24 +197,24 @@ impl Database {
             .execute(&mut *tx)
             .await?;
         for plan in plans {
-            sqlx::query("INSERT OR IGNORE INTO notifications (key, series_id, mode, season, episode_id, due_at, content, retry_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+            sqlx::query("INSERT OR IGNORE INTO notifications (key, series_id, mode, season, episode_id, due_at, content, retry_at, awaiting_confirmation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(&plan.key).bind(series_id).bind(plan.mode.as_str()).bind(plan.season)
                 .bind(plan.episode_id).bind(plan.due_at).bind(&plan.content)
-                .bind(retries.get(&plan.key).copied().unwrap_or(0)).execute(&mut *tx).await?;
+                .bind(retries.get(&plan.key).copied().unwrap_or(0)).bind(plan.awaiting_confirmation).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         Ok(())
     }
 
     pub async fn next_due(&self) -> anyhow::Result<Option<(String, i64, i64)>> {
-        Ok(sqlx::query_as("SELECT n.key, n.series_id, max(n.due_at, n.retry_at, s.webhook_retry_at) FROM notifications n JOIN shows sh ON sh.id = n.series_id JOIN settings s ON s.id = 1 WHERE n.state = 'pending' AND n.mode = sh.mode AND sh.excluded = 0 AND sh.active = 1 AND s.webhook_disabled = 0 AND (n.episode_id IS NULL OR NOT EXISTS (SELECT 1 FROM covered_episodes c WHERE c.episode_id = n.episode_id)) ORDER BY max(n.due_at, n.retry_at, s.webhook_retry_at), n.key LIMIT 1")
+        Ok(sqlx::query_as("SELECT n.key, n.series_id, max(n.due_at, n.retry_at, s.webhook_retry_at) FROM notifications n JOIN shows sh ON sh.id = n.series_id JOIN settings s ON s.id = 1 WHERE n.state = 'pending' AND n.awaiting_confirmation = 0 AND n.mode = sh.mode AND sh.excluded = 0 AND sh.active = 1 AND s.webhook_disabled = 0 AND (n.episode_id IS NULL OR NOT EXISTS (SELECT 1 FROM covered_episodes c WHERE c.episode_id = n.episode_id)) ORDER BY max(n.due_at, n.retry_at, s.webhook_retry_at), n.key LIMIT 1")
             .fetch_optional(&self.pool).await?)
     }
 
     /// Reserve before sending: never automatically resend an ambiguous delivery.
     pub async fn claim(&self, plan: &PlannedNotification, now: i64) -> anyhow::Result<bool> {
         let mut tx = self.pool.begin().await?;
-        let result = sqlx::query("UPDATE notifications SET state = 'sending', attempted_at = ? WHERE key = ? AND state = 'pending' AND due_at <= ? AND retry_at <= ? AND EXISTS (SELECT 1 FROM settings WHERE id = 1 AND webhook_disabled = 0 AND webhook_retry_at <= ?) AND EXISTS (SELECT 1 FROM shows WHERE id = notifications.series_id AND mode = notifications.mode AND excluded = 0 AND active = 1)")
+        let result = sqlx::query("UPDATE notifications SET state = 'sending', attempted_at = ? WHERE key = ? AND state = 'pending' AND awaiting_confirmation = 0 AND due_at <= ? AND retry_at <= ? AND EXISTS (SELECT 1 FROM settings WHERE id = 1 AND webhook_disabled = 0 AND webhook_retry_at <= ?) AND EXISTS (SELECT 1 FROM shows WHERE id = notifications.series_id AND mode = notifications.mode AND excluded = 0 AND active = 1)")
             .bind(now).bind(&plan.key).bind(now).bind(now).bind(now).execute(&mut *tx).await?;
         if result.rows_affected() == 0 {
             return Ok(false);

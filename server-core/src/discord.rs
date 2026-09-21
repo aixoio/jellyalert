@@ -21,8 +21,24 @@ pub enum Delivery {
 
 #[derive(Serialize)]
 struct Message<'a> {
-    content: &'a str,
+    embeds: [Embed<'a>; 1],
     allowed_mentions: AllowedMentions,
+}
+#[derive(Serialize)]
+struct Embed<'a> {
+    author: Author,
+    description: &'a str,
+    color: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<EmbedImage>,
+}
+#[derive(Serialize)]
+struct Author {
+    name: &'static str,
+}
+#[derive(Serialize)]
+struct EmbedImage {
+    url: &'static str,
 }
 #[derive(Serialize)]
 struct AllowedMentions {
@@ -49,18 +65,43 @@ impl Discord {
     }
 
     pub async fn send(&self, content: &str) -> anyhow::Result<Delivery> {
-        let body = serde_json::to_vec(&Message {
-            content,
+        self.send_with_poster(content, None).await
+    }
+
+    pub async fn send_with_poster(
+        &self,
+        content: &str,
+        poster: Option<Vec<u8>>,
+    ) -> anyhow::Result<Delivery> {
+        let body = serde_json::to_string(&Message {
+            embeds: [Embed {
+                author: Author { name: "Jelly Name" },
+                description: content,
+                color: 0x5865f2,
+                image: poster.as_ref().map(|_| EmbedImage {
+                    url: "attachment://series.jpg",
+                }),
+            }],
             allowed_mentions: AllowedMentions { parse: [] },
         })?;
-        let response = match self
-            .client
-            .post(self.webhook.clone())
-            .header("Content-Type", "application/json")
-            .body(body)
-            .send()
-            .await
-        {
+        let request = self.client.post(self.webhook.clone());
+        let request = if let Some(poster) = poster {
+            request.multipart(
+                reqwest::multipart::Form::new()
+                    .text("payload_json", body)
+                    .part(
+                        "files[0]",
+                        reqwest::multipart::Part::bytes(poster)
+                            .file_name("series.jpg")
+                            .mime_str("image/jpeg")?,
+                    ),
+            )
+        } else {
+            request
+                .header("Content-Type", "application/json")
+                .body(body)
+        };
+        let response = match request.send().await {
             Ok(response) => response,
             Err(error) if error.is_connect() => {
                 return Ok(Delivery::Retryable { retry_seconds: 30 });

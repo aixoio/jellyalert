@@ -200,7 +200,7 @@
                                 <article class="card card-border show-card" aria-label={show.title}>
                                     <div class="card-body">
                                         <div class="section-heading"><span class="badge" class:badge-ghost={!show.active || show.excluded} class:badge-success={show.active && !show.excluded} class:badge-soft={show.active && !show.excluded}>{!show.active ? 'Removed from Sonarr' : show.excluded ? 'Excluded' : 'Tracked'}</span>{#if busy === `show:${show.id}` || busy === `mode:${show.id}`}<span class="loading loading-spinner loading-xs" aria-label="Saving"></span>{/if}</div>
-                                        <div class="show-identity"><ShowPoster id={show.id} /><h2 class="card-title show-name">{show.title}</h2></div>
+                                        <a class="show-identity link link-hover" href={`/shows/${show.id}`} aria-label={`View ${show.title} progress`}><ShowPoster id={show.id} /><h2 class="card-title show-name">{show.title}</h2></a>
                                         <div class="show-controls">
                                             <label class="fieldset"><span class="fieldset-legend">Notify me</span><select class="select" aria-label={`Notification mode for ${show.title}`} value={show.mode_overridden ? show.mode : 'default'} disabled={locked || !show.active}
                                         onchange={(event) => {
@@ -230,7 +230,7 @@
             {#if section === 'activity'}
 			<section id="activity" class="page-stack">
 				<div class="page-stack">
-					<div class="section-heading"><div><h2 class="card-title">Notification activity</h2><p>{activityView === 'upcoming' ? 'Eligible alerts for each show’s preference, with the next air time first.' : 'Past delivery attempts, with the latest air time first.'}</p></div><span class="badge badge-outline">Your local time</span></div>
+					<div class="section-heading"><div><h2 class="card-title">Notification activity</h2><p>{activityView === 'upcoming' ? 'Scheduled alerts and seasons awaiting finale confirmation, with the next listed air time first.' : 'Past delivery attempts, with the latest air time first.'}</p></div><span class="badge badge-outline">Your local time</span></div>
 					<div class="tabs tabs-box" aria-label="Activity view"><button class="tab" class:tab-active={activityView === 'upcoming'} aria-pressed={activityView === 'upcoming'} disabled={locked} onclick={() => refresh(0, 'upcoming')}>Upcoming</button><button class="tab" class:tab-active={activityView === 'history'} aria-pressed={activityView === 'history'} disabled={locked} onclick={() => refresh(0, 'history')}>Delivery history</button></div>
 					{#if notifications.length}<ol class="activity-list">
                             {#each notifications as notification (notification.key)}
@@ -240,11 +240,19 @@
                                             <div class="activity-copy">
                                                 <span class="badge badge-outline">{notification.mode === 'season' ? 'Full season' : 'Episode'} · Season {notification.season}</span>
                                                 <h2 class="card-title">{shows.find((show) => show.id === notification.series_id)?.title ?? `Show ${notification.series_id}`}</h2>
-                                                <div><p><strong>{activityView === 'upcoming' ? 'Discord message preview' : 'Discord message'}</strong></p><div class="discord-preview"><strong>Jelly Alert <span class="badge badge-sm">APP</span></strong><p>{notification.content}</p></div></div>
+                                                <details class="message-preview">
+                                                    <summary>{notification.awaiting_confirmation ? 'Preview waiting notice' : 'Preview Discord embed'}</summary>
+                                                    <div class="discord-preview">
+                                                        <strong>Jelly Name</strong>
+                                                        <p>{notification.content}</p>
+                                                        <ShowPoster id={notification.series_id} />
+                                                    </div>
+                                                    <p class="test-help">Series artwork is included when available. If artwork cannot load, the alert still sends with its text.</p>
+                                                </details>
                                             </div>
                                             <dl class="activity-meta">
-                                                <div><dt>Air time</dt><dd><Time value={notification.due_at} /></dd></div>
-                                                <div><dt>Delivery status</dt><dd><span class={`badge ${stateClasses[notification.state]}`}>{stateLabels[notification.state]}</span></dd></div>
+                                                <div><dt>{notification.awaiting_confirmation ? 'Latest listed air time (not confirmed finale)' : 'Air time'}</dt><dd><Time value={notification.due_at} /></dd></div>
+                                                <div><dt>Delivery status</dt><dd><span class={`badge ${stateClasses[notification.state]}`}>{notification.awaiting_confirmation ? 'Awaiting finale confirmation' : stateLabels[notification.state]}</span></dd></div>
                                                 {#if notification.sent_at}<div><dt>Sent at</dt><dd><Time value={notification.sent_at} /></dd></div>{:else if notification.attempted_at}<div><dt>Attempted at</dt><dd><Time value={notification.attempted_at} /></dd></div>{/if}
                                             </dl>
                                         </div>
@@ -267,8 +275,12 @@
 </div>
 
 <style>
-    .discord-preview { margin-top: 0.5rem; padding: 1rem; border-radius: 0.5rem; background: #313338; color: #dbdee1; overflow-wrap: anywhere; }
+    .message-preview summary { cursor: pointer; width: fit-content; font-weight: 600; padding: 0.5rem 0; }
+    .message-preview summary:focus-visible { outline: 2px solid #5865f2; outline-offset: 4px; }
+    .discord-preview { border-left: 4px solid #5865f2; max-width: 32rem; margin-top: 0.5rem; padding: 1rem; border-radius: 0.5rem; background: #313338; color: #dbdee1; overflow-wrap: anywhere; }
     .discord-preview strong { color: #f2f3f5; }
     .discord-preview p { margin-top: 0.4rem; white-space: pre-wrap; }
+    .discord-preview :global(.show-poster) { margin: 0.75rem 0 0; width: 120px; }
+    .discord-preview :global(img) { width: 120px; height: auto; border-radius: 4px; }
     .test-help { font-size: 0.875rem; }
 </style>
