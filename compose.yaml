@@ -2,10 +2,10 @@ services:
   frontend:
     build: ./frontend-client
     ports:
-      - "3000:3000"
+      - "1589:1589"
     environment:
       # Set this to the exact URL you use in your browser (no trailing slash).
-      ORIGIN: http://localhost:3000
+      ORIGIN: http://localhost:1589
       SERVER_CORE_URL: http://backend:8090
     depends_on:
       backend:

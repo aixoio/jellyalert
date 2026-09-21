@@ -8,10 +8,10 @@ RUN pnpm build && pnpm prune --prod
 
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=1589
 COPY --from=build --chown=node:node /app/build ./build
 COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 USER node
-EXPOSE 3000
+EXPOSE 1589
 CMD ["node", "build"]

@@ -27,14 +27,14 @@ The browser talks only to SvelteKit. SvelteKit proxies `/api` requests to Server
 Requires Docker with Compose **2.23.1 or newer**, Sonarr, and a Discord webhook. No local Node.js or Rust installation is needed.
 
 1. Clone this repository and open `compose.yaml`.
-2. Set `sonarr_url`, `sonarr_api_key`, and `discord_webhook_url` near the bottom. Set `ORIGIN` to the exact dashboard URL you will open, such as `http://192.168.1.50:3000` for LAN access.
+2. Set `sonarr_url`, `sonarr_api_key`, and `discord_webhook_url` near the bottom. Set `ORIGIN` to the exact dashboard URL you will open, such as `http://192.168.1.50:1589` for LAN access.
 3. From the repository root, run:
 
 ```sh
 docker compose up -d
 ```
 
-Open [http://localhost:3000](http://localhost:3000), or your configured LAN URL. The first run compiles the SvelteKit frontend and Rust backend; subsequent starts reuse the images. The frontend runs as a production Node.js server. Docker restarts both services after crashes and host reboots while Docker is running.
+Open [http://localhost:1589](http://localhost:1589), or your configured LAN URL. The first run compiles the SvelteKit frontend and Rust backend; subsequent starts reuse the images. The frontend runs as a production Node.js server. Docker restarts both services after crashes and host reboots while Docker is running.
 
 `docker-compose up -d` also works if your installation provides that command for modern Compose; legacy Compose v1 is unsupported. Omit `-d` to watch logs in the foreground (Ctrl+C stops the services).
 
