@@ -1,0 +1,13 @@
+# Local dependency caches
+.pnpm-store/
+node_modules/
+
+# Local environment settings (keep examples tracked)
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Operating system metadata
+.DS_Store
+Thumbs.db

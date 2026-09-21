@@ -1,6 +1,6 @@
 # Jelly Alert client
 
-Svelte 5 + SvelteKit 2, TypeScript, and DaisyUI 5. A trusted-LAN dashboard for the Rust service in `../server-core`. No login, new runtime dependencies, custom theme, fonts, or icon packages.
+Svelte 5 + SvelteKit 2, TypeScript, and DaisyUI 5. A trusted-LAN dashboard for the Rust service in `../server-core`. No login, custom theme, fonts, or icon packages.
 
 ## Development
 
@@ -37,7 +37,7 @@ pnpm preview --host 0.0.0.0
 
 `pnpm test` uses Node's built-in test runner, a local mock backend, and an isolated Vite process. No real Discord messages are sent. Browser checks can use `node tests/mock-core.mjs`, then `SERVER_CORE_URL=http://127.0.0.1:8091 pnpm dev --port 5174`; these fixtures are never used by the normal application.
 
-The existing `adapter-auto` is retained. `pnpm preview` previews the production build; it is not a production process supervisor. For a persistent standalone Node deployment, select `@sveltejs/adapter-node` and a supervisor (that additional package has not been installed). A server runtime is required for the `/api` proxy; this client is not a static export.
+Production builds use [`@sveltejs/adapter-node`](https://svelte.dev/docs/kit/adapter-node) and run with `node build` (or `pnpm start`). Set `ORIGIN` to the browser-facing URL and `SERVER_CORE_URL` to the backend URL. For a complete build with automatic restarts and persistent backend data, follow the [Docker setup](../README.md#docker-setup-recommended). `pnpm preview` is only for local previews.
 
 References: [SvelteKit routing](https://svelte.dev/docs/kit/routing), [Svelte runes](https://svelte.dev/docs/svelte/what-are-runes), [DaisyUI SvelteKit setup](https://daisyui.com/docs/install/sveltekit/).
 

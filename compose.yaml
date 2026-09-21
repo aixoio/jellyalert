@@ -1,0 +1,51 @@
+services:
+  frontend:
+    build: ./frontend-client
+    ports:
+      - "3000:3000"
+    environment:
+      # Set this to the exact URL you use in your browser (no trailing slash).
+      ORIGIN: http://localhost:3000
+      SERVER_CORE_URL: http://backend:8090
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 40s
+    logging:
+      driver: local
+
+  backend:
+    build: ./server-core
+    configs:
+      - source: server_config
+        target: /app/server-config.toml
+    volumes:
+      - jellyalert-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8090/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 60s
+    logging:
+      driver: local
+
+configs:
+  server_config:
+    # Edit these three values. Use $$ for any literal $ in a value.
+    content: |
+      sonarr_url = "http://host.docker.internal:8989"
+      sonarr_api_key = "YOUR_SONARR_API_KEY"
+      discord_webhook_url = "https://discord.com/api/webhooks/WEBHOOK_ID/WEBHOOK_TOKEN"
+      sqlite_database_path = "/data/jelly-alert.db"
+      listen_address = "0.0.0.0:8090"
+      scan_interval_seconds = 300
+      log_level = "info"
+
+volumes:
+  jellyalert-data:
