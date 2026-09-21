@@ -10,13 +10,14 @@ RUN cargo build --release --locked
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && apt-get install -y --no-install-recommends ca-certificates curl gosu \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --create-home jellyalert \
     && mkdir /data \
     && chown jellyalert:jellyalert /data
 WORKDIR /app
 COPY --from=build /app/target/release/server-core /usr/local/bin/server-core
-USER jellyalert
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 EXPOSE 8090
+ENTRYPOINT ["sh", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["server-core", "/app/server-config.toml"]

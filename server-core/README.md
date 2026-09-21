@@ -19,6 +19,8 @@ SQLite is created automatically at `sqlite_database_path`. Relative paths resolv
 
 Server Core emits structured `tracing` logs for startup and shutdown, worker lifecycle, every inbound API request and response, Sonarr requests, scan and planning decisions, database state transitions, delivery checks, and every Discord webhook attempt and outcome. Notification text is logged when a Discord message is prepared and confirmed sent; credentials and webhook URLs are never logged.
 
+Docker Compose also writes backend logs to `./data/logs` on the host. Each startup creates a new `backend-<UTC timestamp>-<pid>.log`, retaining console output and writing plain text with timestamps. Logs are kept until manually deleted. Outside Docker, set `LOG_DIRECTORY` to enable the same file logging.
+
 Set `log_level = "trace"` in `server-config.toml` to include per-episode planning, coverage, response-body, timer, and other fine-grained checks, or choose a quieter level such as `info`. The default is `debug`. An explicitly set `RUST_LOG` environment variable overrides `log_level` and may provide a more detailed tracing filter, such as `server_core=trace`. Log records include Tokio worker thread IDs/names and carry request or worker spans so concurrent activity can be correlated.
 
 ## Notification behavior

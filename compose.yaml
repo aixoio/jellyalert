@@ -19,11 +19,13 @@ services:
 
   backend:
     build: ./server-core
+    environment:
+      LOG_DIRECTORY: /data/logs
     configs:
       - source: server_config
         target: /app/server-config.toml
     volumes:
-      - jellyalert-data:/data
+      - ./data:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -48,6 +50,3 @@ configs:
       listen_address = "0.0.0.0:8090"
       scan_interval_seconds = 300
       log_level = "info"
-
-volumes:
-  jellyalert-data:

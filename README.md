@@ -47,7 +47,22 @@ docker compose up -d --build       # Rebuild after pulling source updates
 docker compose down               # Stop; keep database and settings
 ```
 
-SQLite, settings, and notification history persist in the `jellyalert-data` volume. **`docker compose down -v` deletes this data.** Keep credentials in `compose.yaml` private and do not commit your edited values. Escape literal `$` characters as `$$`. To change the dashboard port, change the left side of `ports` (for example, `8080:1589`). Direct HTTP access automatically uses the requested hostname and port. Behind an HTTPS reverse proxy, set frontend `ORIGIN` to the exact browser-facing URL (for example, `https://jellyalert.example.com`). Only the frontend is published; the backend is reached internally. The dashboard has no login and is for a trusted LAN.
+SQLite, settings, and notification history persist in `./data/jelly-alert.db`, beside `compose.yaml`. Docker creates `./data` automatically; it is excluded from Git and survives `docker compose down` (including `-v`). The container prepares directory permissions and runs the backend as an unprivileged user. Stop the backend before backing up the whole `data` directory. Keep credentials in `compose.yaml` private and do not commit your edited values. Escape literal `$` characters as `$$`. To change the dashboard port, change the left side of `ports` (for example, `8080:1589`). Direct HTTP access automatically uses the requested hostname and port. Behind an HTTPS reverse proxy, set frontend `ORIGIN` to the exact browser-facing URL (for example, `https://jellyalert.example.com`). Only the frontend is published; the backend is reached internally. The dashboard has no login and is for a trusted LAN.
+
+Backend logs are also saved to `./data/logs/backend-<UTC timestamp>-<pid>.log`, with a new file on each backend start and timestamps on every entry. They remain available through `docker compose logs` too. Files are retained until you delete them; monitor disk space for long-running installations. The whole `data` directory, including logs, is ignored by Git.
+
+### Moving existing data from the old Docker volume
+
+Before starting the updated Compose configuration, stop the application and copy the old data (including SQLite sidecar files):
+
+```sh
+docker compose down
+mkdir -p data
+docker run --rm -v jellyalert_jellyalert-data:/old:ro -v "$PWD/data:/new" alpine sh -c 'cp -a /old/. /new/'
+docker compose up -d --build
+```
+
+Run from the repository root. Use your actual old volume name from `docker volume ls` if it differs. Copy into an empty `data` directory; keep the old volume until you have verified the migration. Without this copy, the new directory starts with a fresh database.
 
 ### Troubleshooting 403 on buttons
 

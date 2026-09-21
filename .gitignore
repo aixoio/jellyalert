@@ -2,6 +2,9 @@
 .pnpm-store/
 node_modules/
 
+# Persistent Docker application data
+/data/
+
 # Local environment settings (keep examples tracked)
 .env
 .env.*

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::time::Duration;
+use std::{fs::OpenOptions, path::PathBuf, sync::Mutex, time::Duration};
 
 use anyhow::Context;
 use clap::Parser;
@@ -15,13 +15,13 @@ use server_core::{
 };
 use tokio::{net::TcpListener, sync::watch, task::JoinSet};
 use tracing::{Instrument, error, info, info_span, warn};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let config = ServerConfig::read_from_path(&cli.config_path)?;
-    init_tracing(config.log_level);
+    init_tracing(config.log_level)?;
     info!("starting Jelly Alert server core");
     info!(config_path = %cli.config_path.display(), listen_address = %config.listen_address, scan_interval_seconds = config.scan_interval_seconds, log_level = config.log_level.as_str(), "configuration loaded");
     let db = Database::connect(&config.sqlite_database_path).await?;
@@ -105,15 +105,35 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
-fn init_tracing(log_level: LogLevel) {
+fn init_tracing(log_level: LogLevel) -> anyhow::Result<()> {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(format!("server_core={}", log_level.as_str())));
-    tracing_subscriber::fmt()
+    let subscriber = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(true)
         .with_thread_ids(true)
-        .with_thread_names(true)
-        .init();
+        .with_thread_names(true);
+    if let Some(directory) = std::env::var_os("LOG_DIRECTORY") {
+        let directory = PathBuf::from(directory);
+        std::fs::create_dir_all(&directory).context("cannot create log directory")?;
+        let filename = format!(
+            "backend-{}-{}.log",
+            chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S%.9fZ"),
+            std::process::id()
+        );
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(directory.join(filename))
+            .context("cannot create backend log file")?;
+        subscriber
+            .with_ansi(false)
+            .with_writer(std::io::stdout.and(Mutex::new(file)))
+            .init();
+    } else {
+        subscriber.init();
+    }
+    Ok(())
 }
 
 async fn shutdown_signal() -> anyhow::Result<()> {
