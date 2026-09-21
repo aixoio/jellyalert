@@ -22,6 +22,7 @@ pub enum Delivery {
 
 #[derive(Serialize)]
 struct Message<'a> {
+    content: &'static str,
     embeds: [Embed<'a>; 1],
     allowed_mentions: AllowedMentions,
 }
@@ -47,7 +48,7 @@ struct EmbedImage {
 }
 #[derive(Serialize)]
 struct AllowedMentions {
-    parse: [String; 0],
+    parse: [&'static str; 1],
 }
 #[derive(Deserialize)]
 struct RateLimit {
@@ -95,6 +96,7 @@ impl Discord {
         let title = series.map(series_title);
         let url = series.and_then(|series| series.imdb_id.and_then(imdb_series_url));
         let body = serde_json::to_string(&Message {
+            content: "@everyone",
             embeds: [Embed {
                 author: Author { name: "Jelly Name" },
                 title,
@@ -105,7 +107,9 @@ impl Discord {
                     url: "attachment://series.jpg",
                 }),
             }],
-            allowed_mentions: AllowedMentions { parse: [] },
+            allowed_mentions: AllowedMentions {
+                parse: ["everyone"],
+            },
         })?;
         let request = self.client.post(self.webhook.clone());
         let request = if let Some(poster) = poster {

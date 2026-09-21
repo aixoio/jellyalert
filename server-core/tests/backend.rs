@@ -425,7 +425,7 @@ async fn mock_server() -> MockServer {
                     } else {
                         Json::<Value>::from_request(request, &()).await.unwrap().0
                     };
-                    assert!(message.get("content").is_none());
+                    assert_eq!(message["content"], "@everyone");
                     assert_eq!(message["embeds"][0]["author"]["name"], "Jelly Name");
                     if message["embeds"][0].get("title").is_some() {
                         assert_eq!(message["embeds"][0]["title"], "Test Show (2024)");
@@ -515,8 +515,12 @@ async fn worker_end_to_end_rechecks_library_and_sends_once() {
     );
     assert_eq!(mock.state.requests.load(Ordering::Relaxed), 1);
     assert_eq!(
+        mock.state.messages.lock().unwrap()[0]["content"],
+        "@everyone"
+    );
+    assert_eq!(
         mock.state.messages.lock().unwrap()[0]["allowed_mentions"]["parse"],
-        json!([])
+        json!(["everyone"])
     );
 }
 
