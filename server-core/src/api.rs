@@ -1,14 +1,18 @@
 //! JSON API for trusted LAN clients. No authentication is required.
 
+use std::time::Instant;
+
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{Path, Query, Request, State},
     http::StatusCode,
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post, put},
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use crate::{
     model::{EmbedColors, NotificationMode, Show},
@@ -39,6 +43,40 @@ pub fn router(service: Service) -> Router {
         .route("/api/notifications/{key}/test", post(test_notification))
         .route("/api/webhook/resume", post(resume))
         .with_state(state)
+        .layer(middleware::from_fn(log_request))
+}
+
+async fn log_request(request: Request, next: Next) -> Response {
+    let method = request.method().clone();
+    let uri = request.uri().clone();
+    let version = request.version();
+    let span = info_span!(
+        "api_request",
+        http.method = %method,
+        http.uri = %uri,
+        http.version = ?version,
+        http.status_code = tracing::field::Empty,
+        elapsed_ms = tracing::field::Empty,
+    );
+    async move {
+        info!("API request received");
+        let started = Instant::now();
+        let response = next.run(request).await;
+        let status = response.status();
+        let elapsed_ms = started.elapsed().as_millis();
+        tracing::Span::current().record("http.status_code", status.as_u16());
+        tracing::Span::current().record("elapsed_ms", elapsed_ms);
+        if status.is_server_error() {
+            error!(%status, elapsed_ms, "API request completed");
+        } else if status.is_client_error() {
+            warn!(%status, elapsed_ms, "API request completed");
+        } else {
+            info!(%status, elapsed_ms, "API request completed");
+        }
+        response
+    }
+    .instrument(span)
+    .await
 }
 
 #[derive(Serialize)]
@@ -58,7 +96,7 @@ impl From<sqlx::Error> for ApiError {
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        eprintln!("API database operation failed: {}", self.0);
+        error!(error = %self.0, "API operation failed");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorBody {
@@ -87,6 +125,10 @@ async fn update_settings(
     State(state): State<ApiState>,
     Json(settings): Json<Settings>,
 ) -> Result<StatusCode, ApiError> {
+    info!(
+        mode = settings.mode.as_str(),
+        "updating default notification mode"
+    );
     let _guard = state.service.delivery_gate.lock().await;
     state.service.db.set_default_mode(settings.mode).await?;
     state.service.wake.notify_one();
@@ -102,6 +144,11 @@ async fn update_embed_colors(
     Json(colors): Json<EmbedColors>,
 ) -> Result<Response, ApiError> {
     if colors.episode_color > 0xffffff || colors.season_color > 0xffffff {
+        warn!(
+            episode_color = colors.episode_color,
+            season_color = colors.season_color,
+            "rejected invalid embed colors"
+        );
         return Ok((
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(ErrorBody {
@@ -112,6 +159,11 @@ async fn update_embed_colors(
     }
     let _guard = state.service.delivery_gate.lock().await;
     state.service.db.set_embed_colors(colors).await?;
+    info!(
+        episode_color = colors.episode_color,
+        season_color = colors.season_color,
+        "updated embed colors"
+    );
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -119,6 +171,7 @@ async fn reset_all_modes(
     State(state): State<ApiState>,
     Json(settings): Json<Settings>,
 ) -> Result<StatusCode, ApiError> {
+    info!(mode = settings.mode.as_str(), "resetting all show modes");
     let _guard = state.service.delivery_gate.lock().await;
     state.service.db.reset_all_show_modes(settings.mode).await?;
     state.service.wake.notify_one();
@@ -133,6 +186,16 @@ enum ShowMode {
     Season,
 }
 
+impl ShowMode {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Episode => "episode",
+            Self::Season => "season",
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ShowSettings {
@@ -144,6 +207,11 @@ async fn update_show_mode(
     Path(id): Path<i64>,
     Json(settings): Json<ShowSettings>,
 ) -> Result<StatusCode, ApiError> {
+    info!(
+        series_id = id,
+        mode = settings.mode.as_str(),
+        "updating show notification mode"
+    );
     let _guard = state.service.delivery_gate.lock().await;
     let found = match settings.mode {
         ShowMode::Default => state.service.db.reset_show_mode(id).await?,
@@ -163,6 +231,10 @@ async fn update_show_mode(
         }
     };
     state.service.wake.notify_one();
+    debug!(
+        series_id = id,
+        found, "show notification mode update completed"
+    );
     Ok(if found {
         StatusCode::NO_CONTENT
     } else {
@@ -178,6 +250,7 @@ async fn show_progress(
     State(state): State<ApiState>,
     Path(id): Path<i64>,
 ) -> Result<Response, ApiError> {
+    debug!(series_id = id, "building live show progress");
     let Some(show) = state
         .service
         .db
@@ -186,6 +259,7 @@ async fn show_progress(
         .into_iter()
         .find(|s| s.id == id)
     else {
+        debug!(series_id = id, "show progress requested for unknown show");
         return Ok((
             StatusCode::NOT_FOUND,
             Json(ErrorBody {
@@ -195,6 +269,7 @@ async fn show_progress(
             .into_response());
     };
     if !show.active {
+        debug!(series_id = id, "show progress requested for inactive show");
         return Ok((StatusCode::NOT_FOUND, Json(ErrorBody { error: "This show has been removed from Sonarr. Restore it there to view current progress." })).into_response());
     }
     let result = tokio::try_join!(
@@ -204,6 +279,10 @@ async fn show_progress(
     let (series, episodes) = match result {
         Ok(data) if data.0.id == id => data,
         _ => {
+            warn!(
+                series_id = id,
+                "could not load current progress from Sonarr"
+            );
             return Ok((
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorBody {
@@ -239,11 +318,13 @@ async fn show_progress(
 }
 
 async fn poster(State(state): State<ApiState>, Path(id): Path<i64>) -> Result<Response, ApiError> {
+    debug!(series_id = id, "loading show poster");
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM shows WHERE id = ?)")
         .bind(id)
         .fetch_one(state.service.db.pool())
         .await?;
     if !exists {
+        debug!(series_id = id, "poster requested for unknown show");
         return Ok(StatusCode::NOT_FOUND.into_response());
     }
     Ok(match state.service.sonarr.poster(id).await {
@@ -257,7 +338,10 @@ async fn poster(State(state): State<ApiState>, Path(id): Path<i64>) -> Result<Re
         )
             .into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(_) => StatusCode::BAD_GATEWAY.into_response(),
+        Err(error) => {
+            warn!(series_id = id, error = %error, "could not load poster from Sonarr");
+            StatusCode::BAD_GATEWAY.into_response()
+        }
     })
 }
 
@@ -272,6 +356,11 @@ async fn exclude(
     Path(id): Path<i64>,
     Json(exclusion): Json<Exclusion>,
 ) -> Result<StatusCode, ApiError> {
+    info!(
+        series_id = id,
+        excluded = exclusion.excluded,
+        "updating show exclusion"
+    );
     let _guard = state.service.delivery_gate.lock().await;
     let found = state
         .service
@@ -279,6 +368,7 @@ async fn exclude(
         .set_excluded(id, exclusion.excluded)
         .await?;
     state.service.wake.notify_one();
+    debug!(series_id = id, found, "show exclusion update completed");
     Ok(if found {
         StatusCode::NO_CONTENT
     } else {
@@ -287,6 +377,7 @@ async fn exclude(
 }
 
 async fn resume(State(state): State<ApiState>) -> Result<StatusCode, ApiError> {
+    info!("resuming Discord webhook delivery");
     let _guard = state.service.delivery_gate.lock().await;
     state.service.db.resume_webhook().await?;
     state.service.wake.notify_one();
@@ -302,6 +393,7 @@ struct HealthResponse {
     unresolved_deliveries: i64,
 }
 async fn health(State(state): State<ApiState>) -> ApiResult<HealthResponse> {
+    debug!("checking service health");
     let row = sqlx::query(
         "SELECT webhook_disabled, webhook_retry_at, tracking_since FROM settings WHERE id = 1",
     )
@@ -379,6 +471,7 @@ async fn notifications(
     State(state): State<ApiState>,
     Query(page): Query<Page>,
 ) -> ApiResult<Vec<Notification>> {
+    debug!(limit = ?page.limit, offset = ?page.offset, "listing notifications");
     let query = match page.view {
         Some(NotificationView::Upcoming) => {
             "SELECT n.key, n.series_id, n.mode, n.due_at, n.season, n.content, n.awaiting_confirmation, n.state, n.attempted_at, n.sent_at FROM notifications n JOIN shows s ON s.id = n.series_id WHERE n.state = 'pending' AND n.mode = s.mode AND s.active = 1 AND s.excluded = 0 AND (n.episode_id IS NULL OR NOT EXISTS (SELECT 1 FROM covered_episodes c WHERE c.episode_id = n.episode_id)) ORDER BY n.due_at ASC, n.key LIMIT ? OFFSET ?"
@@ -412,6 +505,7 @@ async fn notifications(
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
+    debug!(count = notifications.len(), "notifications listed");
     Ok(Json(notifications))
 }
 
@@ -420,6 +514,7 @@ async fn test_notification(
     Path(key): Path<String>,
 ) -> Result<Response, ApiError> {
     use crate::discord::Delivery;
+    info!(notification_key = %key, "sending test notification");
     let result = state.service.test_notification(&key).await?;
     let (status, error) = match result {
         Some(Delivery::Sent) => return Ok(StatusCode::NO_CONTENT.into_response()),

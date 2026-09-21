@@ -5,3 +5,5 @@ discord_webhook_url = "https://discord.com/api/webhooks/WEBHOOK_ID/WEBHOOK_TOKEN
 sqlite_database_path = "./jelly-alert.db"
 listen_address = "127.0.0.1:8090"
 scan_interval_seconds = 300
+# Logging: off, error, warn, info, debug, or trace.
+log_level = "debug"

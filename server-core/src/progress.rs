@@ -6,6 +6,7 @@ use crate::{
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use tracing::{debug, instrument, trace};
 
 #[derive(Default, Serialize)]
 pub struct Counts {
@@ -62,6 +63,11 @@ pub struct Progress {
     pub tracking_since: i64,
 }
 
+#[instrument(
+    skip(show, series, episodes, covered, deliveries),
+    fields(series_id = show.id, series.title = %show.title, episode_count = episodes.len(), tracking_since, now)
+)]
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     show: Show,
     series: &Series,
@@ -73,6 +79,7 @@ pub fn build(
     webhook_disabled: bool,
     webhook_retry_at: i64,
 ) -> Progress {
+    debug!("building series progress projection");
     let mut grouped: BTreeMap<i64, Vec<&Episode>> = BTreeMap::new();
     for e in episodes.iter().filter(|e| e.series_id == show.id) {
         grouped.entry(e.season_number).or_default().push(e);
@@ -92,11 +99,13 @@ pub fn build(
     let candidates: Vec<_> = planner::plan(series, episodes, tracking_since)
         .into_iter()
         .filter(|p| {
-            p.mode == show.mode
+            let eligible = p.mode == show.mode
                 && !deliveries
                     .get(&p.key)
                     .is_some_and(|state| state != "pending")
-                && p.episode_ids.iter().any(|id| !covered.contains(id))
+                && p.episode_ids.iter().any(|id| !covered.contains(id));
+            trace!(notification_key = %p.key, mode = p.mode.as_str(), eligible, "checked progress notification candidate");
+            eligible
         })
         .map(|p| {
             let episode = p
@@ -122,7 +131,7 @@ pub fn build(
         })
         .collect();
     let mut counts = Counts::default();
-    let seasons = grouped
+    let seasons: Vec<_> = grouped
         .iter()
         .map(|(&number, members)| {
             let mut ordered = members.clone();
@@ -139,6 +148,14 @@ pub fn build(
                 && consecutive
                 && evidence
                 && ordered.iter().all(|e| e.air_date_utc.is_some());
+            trace!(
+                season = number,
+                episode_count = ordered.len(),
+                consecutive,
+                evidence,
+                completion_confirmed,
+                "checked season completion progress"
+            );
             let season_counts = Counts {
                 total: ordered.len(),
                 aired: ordered
@@ -201,6 +218,14 @@ pub fn build(
     let next_notification = candidates
         .into_iter()
         .min_by_key(|p| (p.awaiting_confirmation, p.due_at));
+    debug!(
+        season_count = seasons.len(),
+        total_episodes = counts.total,
+        has_next_release = next_release.is_some(),
+        has_next_notification = next_notification.is_some(),
+        blocked = notification_block.is_some(),
+        "series progress projection complete"
+    );
     Progress {
         show,
         status: series.status,

@@ -1,23 +1,35 @@
 //! Pure scheduling rules, independent of network and database state.
 use std::collections::BTreeMap;
+use tracing::{debug, instrument, trace};
 
 use crate::{
     model::{NotificationMode, PlannedNotification},
     sonarr::{Episode, FinaleType, Series, SeriesStatus},
 };
 
+#[instrument(
+    skip(series, episodes),
+    fields(series_id = series.id, series.title = %series.title, episode_count = episodes.len(), tracking_since)
+)]
 pub fn plan(
     series: &Series,
     episodes: &[Episode],
     tracking_since: i64,
 ) -> Vec<PlannedNotification> {
     if !series.monitored {
+        debug!("no notifications planned because the series is unmonitored");
         return Vec::new();
     }
+    debug!("evaluating series notification plans");
     let mut plans = Vec::new();
     let mut seasons: BTreeMap<i64, Vec<&Episode>> = BTreeMap::new();
     for episode in episodes {
         if episode.series_id != series.id {
+            trace!(
+                episode_id = episode.id,
+                episode_series_id = episode.series_id,
+                "ignoring episode belonging to another series"
+            );
             continue;
         }
         // Specials have no reliable season completion boundary.
@@ -28,14 +40,31 @@ pub fn plan(
                 .push(episode);
         }
         if !episode.monitored || episode.has_file {
+            trace!(
+                episode_id = episode.id,
+                monitored = episode.monitored,
+                has_file = episode.has_file,
+                "episode does not need a missing-library notification"
+            );
             continue;
         }
         let Some(date) = episode.air_date_utc else {
+            trace!(episode_id = episode.id, "episode has no air date");
             continue;
         };
         if date.timestamp() < tracking_since {
+            trace!(
+                episode_id = episode.id,
+                due_at = date.timestamp(),
+                "episode predates the tracking cutoff"
+            );
             continue;
         }
+        trace!(
+            episode_id = episode.id,
+            due_at = date.timestamp(),
+            "episode notification planned"
+        );
         plans.push(PlannedNotification {
             awaiting_confirmation: false,
             key: format!("episode:{}", episode.id), series_id: series.id,
@@ -52,6 +81,7 @@ pub fn plan(
             .map(|e| e.id)
             .collect();
         if missing.is_empty() {
+            trace!(season, "season has no missing monitored episodes");
             continue;
         }
         // Require every known episode, including unmonitored episodes, to have a date.
@@ -60,12 +90,15 @@ pub fn plan(
             .map(|e| e.air_date_utc.map(|d| d.timestamp()))
             .collect::<Option<Vec<_>>>()
         else {
+            trace!(season, "season has episodes with unknown air dates");
             continue;
         };
         let Some(due_at) = dates.into_iter().max() else {
+            trace!(season, "season has no dated episodes");
             continue;
         };
         if due_at < tracking_since {
+            trace!(season, due_at, "season predates the tracking cutoff");
             continue;
         }
         let mut numbers: Vec<_> = members.iter().map(|e| e.episode_number).collect();
@@ -76,6 +109,7 @@ pub fn plan(
             .zip(1_i64..)
             .any(|(actual, expected)| actual != expected)
         {
+            trace!(season, "season episode numbering is incomplete");
             continue;
         }
         let last_number = members.iter().map(|e| e.episode_number).max();
@@ -87,6 +121,15 @@ pub fn plan(
         let has_later_season = seasons.keys().any(|number| number > season);
         let awaiting_confirmation =
             !has_finale && !has_later_season && series.status != SeriesStatus::Ended;
+        trace!(
+            season,
+            due_at,
+            missing_count = missing.len(),
+            has_finale,
+            has_later_season,
+            awaiting_confirmation,
+            "season notification planned"
+        );
         plans.push(PlannedNotification {
             awaiting_confirmation,
             key: format!("season:{}:{season}", series.id), series_id: series.id,
@@ -97,6 +140,10 @@ pub fn plan(
             episode_ids: missing,
         });
     }
+    debug!(
+        plan_count = plans.len(),
+        "series notification planning complete"
+    );
     plans
 }
 

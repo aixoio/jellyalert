@@ -1,6 +1,7 @@
 # Example only: create the jelly-alert user, install the release binary at
 # /opt/jelly-alert/server-core, and provision /etc/jelly-alert.toml first.
-# Set sqlite_database_path = "/var/lib/jelly-alert/jelly-alert.db" in that config.
+# Set sqlite_database_path = "/var/lib/jelly-alert/jelly-alert.db" and the desired
+# log_level (off, error, warn, info, debug, or trace) in that config.
 [Unit]
 Description=Jelly Alert Sonarr notification backend
 Wants=network-online.target

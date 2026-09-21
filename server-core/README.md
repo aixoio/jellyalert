@@ -11,9 +11,15 @@ cp server-config.example.toml server-config.toml
 cargo run --release -- server-config.toml
 ```
 
-Keep the config private (`chmod 600 server-config.toml`). The Sonarr URL is the instance's base URL, including a reverse-proxy subpath if needed, without `/api/v3`. The default API address is `127.0.0.1:8090`.
+Keep the config private (`chmod 600 server-config.toml`). The Sonarr URL is the instance's base URL, including a reverse-proxy subpath if needed, without `/api/v3`. The default API address is `127.0.0.1:8090`. `log_level` accepts `off`, `error`, `warn`, `info`, `debug`, or `trace` and defaults to `debug` when omitted.
 
 SQLite is created automatically at `sqlite_database_path`. Relative paths resolve from the process's working directory. SQL migrations live in `migrations/`, are embedded as SQL using `include_str!`, and run through SQLx's `Migrator` with checksum verification. Deployment needs the binary and configuration, not the source tree or a migration directory. No SQLx code-generation macros are used; the SQLx macros feature is disabled. Both Rust crate roots forbid unsafe code.
+
+## Logging
+
+Server Core emits structured `tracing` logs for startup and shutdown, worker lifecycle, every inbound API request and response, Sonarr requests, scan and planning decisions, database state transitions, delivery checks, and every Discord webhook attempt and outcome. Notification text is logged when a Discord message is prepared and confirmed sent; credentials and webhook URLs are never logged.
+
+Set `log_level = "trace"` in `server-config.toml` to include per-episode planning, coverage, response-body, timer, and other fine-grained checks, or choose a quieter level such as `info`. The default is `debug`. An explicitly set `RUST_LOG` environment variable overrides `log_level` and may provide a more detailed tracing filter, such as `server_core=trace`. Log records include Tokio worker thread IDs/names and carry request or worker spans so concurrent activity can be correlated.
 
 ## Notification behavior
 

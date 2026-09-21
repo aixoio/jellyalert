@@ -5,6 +5,7 @@ use sqlx::{
     migrate::{Migration, MigrationType, Migrator},
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
+use tracing::{debug, info, instrument, trace};
 
 use crate::model::{EmbedColors, NotificationMode, PlannedNotification, Show};
 
@@ -14,7 +15,9 @@ pub struct Database {
 }
 
 impl Database {
+    #[instrument(skip(database_path))]
     pub async fn connect(database_path: &str) -> anyhow::Result<Self> {
+        info!("connecting to SQLite database");
         let options = SqliteConnectOptions::new()
             .filename(database_path)
             .create_if_missing(true)
@@ -29,10 +32,13 @@ impl Database {
             .await?;
         let db = Self { pool };
         db.migrate().await?;
+        info!("SQLite database connected and migrated");
         Ok(db)
     }
 
+    #[instrument(skip(self))]
     async fn migrate(&self) -> anyhow::Result<()> {
+        debug!("checking database migrations");
         // Embed SQL, not generated Rust: the SQLx migrator still validates checksums.
         Migrator::with_migrations(vec![
             Migration::new(
@@ -76,6 +82,7 @@ impl Database {
         sqlx::query("INSERT OR IGNORE INTO settings (id, tracking_since) VALUES (1, unixepoch())")
             .execute(&self.pool)
             .await?;
+        debug!("database migrations and settings row verified");
         Ok(())
     }
 
@@ -84,15 +91,20 @@ impl Database {
     }
 
     pub async fn set_show_mode(&self, id: i64, mode: NotificationMode) -> anyhow::Result<bool> {
-        Ok(
-            sqlx::query("UPDATE shows SET mode = ?, mode_overridden = 1 WHERE id = ?")
-                .bind(mode.as_str())
-                .bind(id)
-                .execute(&self.pool)
-                .await?
-                .rows_affected()
-                == 1,
-        )
+        let found = sqlx::query("UPDATE shows SET mode = ?, mode_overridden = 1 WHERE id = ?")
+            .bind(mode.as_str())
+            .bind(id)
+            .execute(&self.pool)
+            .await?
+            .rows_affected()
+            == 1;
+        info!(
+            series_id = id,
+            mode = mode.as_str(),
+            found,
+            "database show mode updated"
+        );
+        Ok(found)
     }
 
     pub async fn embed_colors(&self) -> anyhow::Result<EmbedColors> {
@@ -100,6 +112,7 @@ impl Database {
             sqlx::query_as("SELECT episode_color, season_color FROM settings WHERE id = 1")
                 .fetch_one(&self.pool)
                 .await?;
+        trace!(episode_color, season_color, "database embed colors loaded");
         Ok(EmbedColors {
             episode_color,
             season_color,
@@ -116,6 +129,11 @@ impl Database {
             .bind(colors.season_color)
             .execute(&self.pool)
             .await?;
+        info!(
+            episode_color = colors.episode_color,
+            season_color = colors.season_color,
+            "database embed colors updated"
+        );
         Ok(())
     }
 
@@ -123,6 +141,7 @@ impl Database {
         let mode: String = sqlx::query_scalar("SELECT default_mode FROM settings WHERE id = 1")
             .fetch_one(&self.pool)
             .await?;
+        trace!(%mode, "database default notification mode loaded");
         NotificationMode::try_from(mode.as_str())
     }
 
@@ -137,6 +156,10 @@ impl Database {
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
+        info!(
+            mode = mode.as_str(),
+            "database default notification mode updated"
+        );
         Ok(())
     }
 
@@ -151,24 +174,30 @@ impl Database {
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
+        info!(
+            mode = mode.as_str(),
+            "database default and all show modes reset"
+        );
         Ok(())
     }
 
     pub async fn reset_show_mode(&self, id: i64) -> anyhow::Result<bool> {
-        Ok(sqlx::query("UPDATE shows SET mode = (SELECT default_mode FROM settings WHERE id = 1), mode_overridden = 0 WHERE id = ?")
-            .bind(id).execute(&self.pool).await?.rows_affected() == 1)
+        let found = sqlx::query("UPDATE shows SET mode = (SELECT default_mode FROM settings WHERE id = 1), mode_overridden = 0 WHERE id = ?")
+            .bind(id).execute(&self.pool).await?.rows_affected() == 1;
+        info!(series_id = id, found, "database show mode reset to default");
+        Ok(found)
     }
 
     pub async fn tracking_since(&self) -> anyhow::Result<i64> {
-        Ok(
-            sqlx::query_scalar("SELECT tracking_since FROM settings WHERE id = 1")
-                .fetch_one(&self.pool)
-                .await?,
-        )
+        let tracking_since = sqlx::query_scalar("SELECT tracking_since FROM settings WHERE id = 1")
+            .fetch_one(&self.pool)
+            .await?;
+        trace!(tracking_since, "database tracking cutoff loaded");
+        Ok(tracking_since)
     }
 
     pub async fn shows(&self) -> anyhow::Result<Vec<Show>> {
-        sqlx::query("SELECT id, title, excluded, active, mode, mode_overridden FROM shows ORDER BY title, id")
+        let shows = sqlx::query("SELECT id, title, excluded, active, mode, mode_overridden FROM shows ORDER BY title, id")
             .fetch_all(&self.pool)
             .await?
             .iter()
@@ -182,20 +211,31 @@ impl Database {
                     mode: NotificationMode::try_from(row.try_get::<&str, _>("mode")?)?,
                 })
             })
-            .collect()
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        trace!(count = shows.len(), "database shows loaded");
+        Ok(shows)
     }
 
     pub async fn set_excluded(&self, id: i64, excluded: bool) -> anyhow::Result<bool> {
-        Ok(sqlx::query("UPDATE shows SET excluded = ? WHERE id = ?")
+        let found = sqlx::query("UPDATE shows SET excluded = ? WHERE id = ?")
             .bind(excluded)
             .bind(id)
             .execute(&self.pool)
             .await?
             .rows_affected()
-            == 1)
+            == 1;
+        info!(
+            series_id = id,
+            excluded, found, "database show exclusion updated"
+        );
+        Ok(found)
     }
 
     pub async fn sync_shows(&self, shows: &[(i64, String)]) -> anyhow::Result<()> {
+        debug!(
+            count = shows.len(),
+            "synchronizing Sonarr shows to database"
+        );
         let mut tx = self.pool.begin().await?;
         sqlx::query("UPDATE shows SET active = 0")
             .execute(&mut *tx)
@@ -205,6 +245,7 @@ impl Database {
                 .bind(id).bind(title).execute(&mut *tx).await?;
         }
         tx.commit().await?;
+        info!(count = shows.len(), "database shows synchronized");
         Ok(())
     }
 
@@ -213,6 +254,11 @@ impl Database {
         series_id: i64,
         plans: &[PlannedNotification],
     ) -> anyhow::Result<()> {
+        debug!(
+            series_id,
+            plan_count = plans.len(),
+            "replacing pending notification plans"
+        );
         let mut tx = self.pool.begin().await?;
         // A refresh must not bypass a backoff after a failed Sonarr verification.
         let retries: std::collections::HashMap<String, i64> = sqlx::query_as::<_, (String, i64)>(
@@ -234,20 +280,29 @@ impl Database {
                 .bind(retries.get(&plan.key).copied().unwrap_or(0)).bind(plan.awaiting_confirmation).execute(&mut *tx).await?;
         }
         tx.commit().await?;
+        info!(
+            series_id,
+            plan_count = plans.len(),
+            "database notification plans replaced"
+        );
         Ok(())
     }
 
     pub async fn next_due(&self) -> anyhow::Result<Option<(String, i64, i64)>> {
-        Ok(sqlx::query_as("SELECT n.key, n.series_id, max(n.due_at, n.retry_at, s.webhook_retry_at) FROM notifications n JOIN shows sh ON sh.id = n.series_id JOIN settings s ON s.id = 1 WHERE n.state = 'pending' AND n.awaiting_confirmation = 0 AND n.mode = sh.mode AND sh.excluded = 0 AND sh.active = 1 AND s.webhook_disabled = 0 AND (n.episode_id IS NULL OR NOT EXISTS (SELECT 1 FROM covered_episodes c WHERE c.episode_id = n.episode_id)) ORDER BY max(n.due_at, n.retry_at, s.webhook_retry_at), n.key LIMIT 1")
-            .fetch_optional(&self.pool).await?)
+        let next = sqlx::query_as("SELECT n.key, n.series_id, max(n.due_at, n.retry_at, s.webhook_retry_at) FROM notifications n JOIN shows sh ON sh.id = n.series_id JOIN settings s ON s.id = 1 WHERE n.state = 'pending' AND n.awaiting_confirmation = 0 AND n.mode = sh.mode AND sh.excluded = 0 AND sh.active = 1 AND s.webhook_disabled = 0 AND (n.episode_id IS NULL OR NOT EXISTS (SELECT 1 FROM covered_episodes c WHERE c.episode_id = n.episode_id)) ORDER BY max(n.due_at, n.retry_at, s.webhook_retry_at), n.key LIMIT 1")
+            .fetch_optional(&self.pool).await?;
+        trace!(next = ?next, "database next due notification checked");
+        Ok(next)
     }
 
     /// Reserve before sending: never automatically resend an ambiguous delivery.
     pub async fn claim(&self, plan: &PlannedNotification, now: i64) -> anyhow::Result<bool> {
+        debug!(notification_key = %plan.key, series_id = plan.series_id, now, "attempting database notification claim");
         let mut tx = self.pool.begin().await?;
         let result = sqlx::query("UPDATE notifications SET state = 'sending', attempted_at = ? WHERE key = ? AND state = 'pending' AND awaiting_confirmation = 0 AND due_at <= ? AND retry_at <= ? AND EXISTS (SELECT 1 FROM settings WHERE id = 1 AND webhook_disabled = 0 AND webhook_retry_at <= ?) AND EXISTS (SELECT 1 FROM shows WHERE id = notifications.series_id AND mode = notifications.mode AND excluded = 0 AND active = 1)")
             .bind(now).bind(&plan.key).bind(now).bind(now).bind(now).execute(&mut *tx).await?;
         if result.rows_affected() == 0 {
+            debug!(notification_key = %plan.key, "database notification claim rejected");
             return Ok(false);
         }
         let mut uncovered = false;
@@ -255,6 +310,7 @@ impl Database {
             let changed = sqlx::query("INSERT OR IGNORE INTO covered_episodes (episode_id, notification_key) VALUES (?, ?)")
                 .bind(id).bind(&plan.key).execute(&mut *tx).await?.rows_affected();
             uncovered |= changed > 0;
+            trace!(notification_key = %plan.key, episode_id = id, newly_covered = changed > 0, "checked episode notification coverage");
         }
         if !uncovered {
             sqlx::query("UPDATE notifications SET state = 'covered' WHERE key = ?")
@@ -262,9 +318,11 @@ impl Database {
                 .execute(&mut *tx)
                 .await?;
             tx.commit().await?;
+            info!(notification_key = %plan.key, "notification marked covered without delivery");
             return Ok(false);
         }
         tx.commit().await?;
+        info!(notification_key = %plan.key, "database notification claimed for delivery");
         Ok(true)
     }
 
@@ -281,6 +339,12 @@ impl Database {
         .bind(key)
         .execute(&self.pool)
         .await?;
+        info!(
+            notification_key = key,
+            state = state.as_str(),
+            now,
+            "database notification attempt finalized"
+        );
         Ok(())
     }
 
@@ -301,6 +365,10 @@ impl Database {
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
+        info!(
+            notification_key = key,
+            retry_at, "database notification released for retry"
+        );
         Ok(())
     }
 
@@ -310,6 +378,10 @@ impl Database {
             .bind(key)
             .execute(&self.pool)
             .await?;
+        info!(
+            notification_key = key,
+            retry_at, "database notification deferred"
+        );
         Ok(())
     }
 
@@ -317,6 +389,7 @@ impl Database {
         sqlx::query("UPDATE settings SET webhook_disabled = 1 WHERE id = 1")
             .execute(&self.pool)
             .await?;
+        info!("database Discord webhook disabled");
         Ok(())
     }
 
@@ -324,6 +397,7 @@ impl Database {
         sqlx::query("UPDATE settings SET webhook_disabled = 0, webhook_retry_at = 0 WHERE id = 1")
             .execute(&self.pool)
             .await?;
+        info!("database Discord webhook resumed");
         Ok(())
     }
 }

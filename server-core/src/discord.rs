@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use reqwest::{Client, StatusCode, Url};
 use serde::{Deserialize, Serialize};
+use tracing::{debug, error, info, instrument, warn};
 
 #[derive(Clone)]
 pub struct Discord {
@@ -68,12 +69,17 @@ impl Discord {
         self.send_with_poster(content, None, 0x5865f2).await
     }
 
+    #[instrument(
+        skip(self, content, poster),
+        fields(message.length = content.len(), message.color = color, message.has_poster = poster.is_some())
+    )]
     pub async fn send_with_poster(
         &self,
         content: &str,
         poster: Option<Vec<u8>>,
         color: u32,
     ) -> anyhow::Result<Delivery> {
+        info!(message = %content, "preparing Discord message");
         let body = serde_json::to_string(&Message {
             embeds: [Embed {
                 author: Author { name: "Jelly Name" },
@@ -102,15 +108,22 @@ impl Discord {
                 .header("Content-Type", "application/json")
                 .body(body)
         };
+        debug!("posting Discord webhook message");
         let response = match request.send().await {
             Ok(response) => response,
             Err(error) if error.is_connect() => {
+                warn!(error = %error.without_url(), retry_seconds = 30, "Discord connection failed before delivery");
                 return Ok(Delivery::Retryable { retry_seconds: 30 });
             }
-            Err(_) => return Ok(Delivery::Uncertain),
+            Err(error) => {
+                error!(error = %error.without_url(), "Discord request failed with an uncertain delivery outcome");
+                return Ok(Delivery::Uncertain);
+            }
         };
         let status = response.status();
+        debug!(%status, "Discord responded to webhook request");
         if status.is_success() {
+            info!(%status, message = %content, "Discord message sent");
             return Ok(Delivery::Sent);
         }
         if status == StatusCode::TOO_MANY_REQUESTS {
@@ -129,20 +142,23 @@ impl Discord {
                 .filter(|v| v.is_finite() && *v >= 0.0)
                 .unwrap_or(60.0);
             // A malicious or corrupt duration cannot overflow timestamps.
-            return Ok(Delivery::RateLimited {
-                retry_seconds: delay.ceil().clamp(1.0, 604800.0) as u64,
-            });
+            let retry_seconds = delay.ceil().clamp(1.0, 604800.0) as u64;
+            warn!(%status, retry_seconds, "Discord rate limited the webhook request");
+            return Ok(Delivery::RateLimited { retry_seconds });
         }
         if matches!(
             status,
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
         ) {
+            error!(%status, "Discord rejected or could not find the webhook");
             return Ok(Delivery::Disabled);
         }
         if status.is_client_error() {
+            error!(%status, "Discord rejected the webhook message");
             return Ok(Delivery::Rejected);
         }
         // A proxy/server error may happen after Discord accepted the message.
+        error!(%status, "Discord returned a server error with an uncertain delivery outcome");
         Ok(Delivery::Uncertain)
     }
 }
