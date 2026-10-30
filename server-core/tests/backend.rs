@@ -178,7 +178,7 @@ async fn migrations_restart_and_deduplication() {
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(count, 5);
+    assert_eq!(count, 6);
     reopened.pool().close().await;
 }
 
@@ -326,6 +326,129 @@ async fn rescheduling_and_downloads_replace_pending_plans() {
         .await
         .unwrap();
     assert!(db.next_due().await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn claims_reject_obsolete_plans_even_when_only_coverage_changes() {
+    let fixture = TestDb::new().await;
+    let db = &fixture.db;
+    db.sync_shows(&[(1, "Show".into())]).await.unwrap();
+    db.set_show_mode(1, NotificationMode::Season).await.unwrap();
+    let mut episodes = vec![episode(1, 1, 100), episode(2, 2, 100)];
+    episodes[1].finale_type = Some(FinaleType::Season);
+    episodes[1].has_file = true;
+    let old = season_plan(&episodes).remove(0);
+    db.replace_plans(1, std::slice::from_ref(&old))
+        .await
+        .unwrap();
+    episodes[0].has_file = true;
+    episodes[1].has_file = false;
+    let current = season_plan(&episodes).remove(0);
+    assert_eq!(old.content, current.content);
+    assert_ne!(old.episode_ids, current.episode_ids);
+    db.replace_plans(1, std::slice::from_ref(&current))
+        .await
+        .unwrap();
+    assert!(!db.claim(&old, 200).await.unwrap());
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM covered_episodes")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    assert!(db.claim(&current, 200).await.unwrap());
+    let covered: Vec<i64> = sqlx::query_scalar("SELECT episode_id FROM covered_episodes")
+        .fetch_all(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(covered, vec![2]);
+}
+
+#[tokio::test]
+async fn specials_are_visible_projected_and_delivered_in_season_mode() {
+    use std::collections::{HashMap, HashSet};
+    let fixture = TestDb::new().await;
+    let mock = mock_server().await;
+    let service = service(fixture.db.clone(), &mock);
+    let mut episodes = episode_json(Utc::now().timestamp() - 1, false);
+    episodes[0]["seasonNumber"] = json!(0);
+    *mock.state.episodes.lock().unwrap() = episodes;
+    service.scan().await.unwrap();
+    fixture
+        .db
+        .set_show_mode(1, NotificationMode::Season)
+        .await
+        .unwrap();
+    assert_eq!(fixture.db.next_due().await.unwrap().unwrap().0, "episode:1");
+    let router = api::router(service.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let upcoming: Value = serde_json::from_slice(
+        &reqwest::get(format!("{base}/api/notifications?view=upcoming"))
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(upcoming.as_array().unwrap().len(), 1);
+    assert_eq!(upcoming[0]["season"], 0);
+    let mut special = episode(1, 1, 100);
+    special.season_number = 0;
+    let show = fixture.db.shows().await.unwrap().remove(0);
+    let progress = server_core::progress::build(
+        show,
+        &series(),
+        &[special],
+        0,
+        200,
+        &HashSet::new(),
+        &HashMap::new(),
+        false,
+        0,
+    );
+    assert_eq!(progress.next_notification.unwrap().season, 0);
+    service.delivery_step().await.unwrap();
+    assert_eq!(mock.state.requests.load(Ordering::Relaxed), 1);
+    assert!(fixture.db.next_due().await.unwrap().is_none());
+    task.abort();
+}
+
+#[tokio::test]
+async fn test_send_deadline_cancels_queued_sends_and_warns_before_retry() {
+    let fixture = TestDb::new().await;
+    let mock = mock_server().await;
+    let service = service(fixture.db.clone(), &mock);
+    *mock.state.episodes.lock().unwrap() = episode_json(Utc::now().timestamp() - 1, false);
+    service.scan().await.unwrap();
+    let gate = service.delivery_gate.lock().await;
+    let router = api::router(service.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let started = std::time::Instant::now();
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(35))
+        .build()
+        .unwrap()
+        .post(format!("{base}/api/notifications/episode:1/test"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+    assert!(started.elapsed() < Duration::from_secs(35));
+    let error: Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("check Discord before sending another test")
+    );
+    drop(gate);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(mock.state.requests.load(Ordering::Relaxed), 0);
+    task.abort();
 }
 
 #[derive(Clone)]
@@ -1017,6 +1140,19 @@ async fn per_show_migration_preserves_legacy_policy_and_history() {
     assert_eq!(db.shows().await.unwrap()[0].mode, NotificationMode::Season);
     assert!(db.shows().await.unwrap()[0].excluded);
     assert!(db.shows().await.unwrap()[0].mode_overridden);
+    assert_eq!(db.default_mode().await.unwrap(), NotificationMode::Season);
+    db.sync_shows(&[(1, "Existing show".into()), (2, "New show".into())])
+        .await
+        .unwrap();
+    let new_show = db
+        .shows()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|show| show.id == 2)
+        .unwrap();
+    assert_eq!(new_show.mode, NotificationMode::Season);
+    assert!(!new_show.mode_overridden);
     db.set_default_mode(NotificationMode::Episode)
         .await
         .unwrap();

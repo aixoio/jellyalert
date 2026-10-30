@@ -11,6 +11,7 @@ const proxy: RequestHandler = async ({ params, request, url, fetch }) => {
 			? ['settings', 'settings/reset-all', 'settings/colors'].includes(path) || /^shows\/[1-9]\d*\/(exclusion|mode)$/.test(path)
 			: request.method === 'POST' && (path === 'webhook/resume' || /^notifications\/(episode:\d+|season:\d+:\d+)\/test$/.test(path));
 	if (!allowed) return json({ error: 'Unknown API endpoint.' }, { status: 404 });
+	const testSend = request.method === 'POST' && path.endsWith('/test');
 	// adapter-node assumes HTTPS when ORIGIN is unset, even for direct HTTP.
 	// Use the actual Host (including the published port) for our HTTP LAN default.
 	// HTTPS deployments must set ORIGIN to their browser-facing URL.
@@ -27,7 +28,7 @@ const proxy: RequestHandler = async ({ params, request, url, fetch }) => {
 			method: request.method,
 			headers: { 'content-type': 'application/json' },
 			body: request.method === 'PUT' ? await request.text() : undefined,
-			signal: AbortSignal.timeout(30_000),
+			signal: AbortSignal.timeout(testSend ? 40_000 : 30_000),
 			redirect: 'error'
 		});
 		return new Response(response.body, {
@@ -35,6 +36,7 @@ const proxy: RequestHandler = async ({ params, request, url, fetch }) => {
 			headers: { 'content-type': response.headers.get('content-type') || 'application/json', 'cache-control': path.endsWith('/poster') && response.ok ? 'private, max-age=86400' : 'no-store', 'x-content-type-options': 'nosniff' }
 		});
 	} catch {
+		if (testSend) return json({ error: 'Test delivery could not be confirmed. It may have arrived; check Discord before sending another test.' }, { status: 502 });
 		return json({ error: 'Cannot reach Server Core. Check that it is running, then retry.' }, { status: 502 });
 	}
 };

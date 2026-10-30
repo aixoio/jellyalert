@@ -5,6 +5,7 @@
 
 <div class="card card-border max-w-lg border-l-4 bg-base-200" style:border-left-color={color}>
 	<div class="card-body gap-3 wrap-anywhere">
+		<p class="font-semibold">@everyone</p>
 		<strong>Jelly Name</strong>
 		{@render children()}
 	</div>

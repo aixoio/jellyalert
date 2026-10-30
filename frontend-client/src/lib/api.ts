@@ -15,13 +15,21 @@ export interface Notification {
 }
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-	const response = await fetch(`/api/${path}`, {
-		...options,
-		headers: { 'content-type': 'application/json', ...options.headers },
-		signal: options.signal ?? AbortSignal.timeout(35_000)
-	});
+	const testSend = options.method === 'POST' && path.endsWith('/test');
+	const unconfirmedTest = 'Test delivery could not be confirmed. It may have arrived; check Discord before sending another test.';
+	let response: Response;
+	try {
+		response = await fetch(`/api/${path}`, {
+			...options,
+			headers: { 'content-type': 'application/json', ...options.headers },
+			signal: options.signal ?? AbortSignal.timeout(testSend ? 45_000 : 35_000)
+		});
+	} catch (cause) {
+		if (testSend) throw new Error(unconfirmedTest);
+		throw cause;
+	}
 	if (!response.ok) {
-		let message = `Request failed (${response.status}). Please retry.`;
+		let message = testSend ? unconfirmedTest : `Request failed (${response.status}). Please retry.`;
 		try {
 			const body: unknown = await response.json();
 			if (typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string') message = body.error;

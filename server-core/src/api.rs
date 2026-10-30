@@ -474,7 +474,7 @@ async fn notifications(
     debug!(limit = ?page.limit, offset = ?page.offset, "listing notifications");
     let query = match page.view {
         Some(NotificationView::Upcoming) => {
-            "SELECT n.key, n.series_id, n.mode, n.due_at, n.season, n.content, n.awaiting_confirmation, n.state, n.attempted_at, n.sent_at FROM notifications n JOIN shows s ON s.id = n.series_id WHERE n.state = 'pending' AND n.mode = s.mode AND s.active = 1 AND s.excluded = 0 AND (n.episode_id IS NULL OR NOT EXISTS (SELECT 1 FROM covered_episodes c WHERE c.episode_id = n.episode_id)) ORDER BY n.due_at ASC, n.key LIMIT ? OFFSET ?"
+            "SELECT n.key, n.series_id, n.mode, n.due_at, n.season, n.content, n.awaiting_confirmation, n.state, n.attempted_at, n.sent_at FROM notifications n JOIN shows s ON s.id = n.series_id WHERE n.state = 'pending' AND (n.mode = s.mode OR (n.mode = 'episode' AND n.season = 0)) AND s.active = 1 AND s.excluded = 0 AND (n.episode_id IS NULL OR NOT EXISTS (SELECT 1 FROM covered_episodes c WHERE c.episode_id = n.episode_id)) ORDER BY n.due_at ASC, n.key LIMIT ? OFFSET ?"
         }
         Some(NotificationView::History) => {
             "SELECT key, series_id, mode, due_at, season, content, awaiting_confirmation, state, attempted_at, sent_at FROM notifications WHERE state <> 'pending' ORDER BY due_at DESC, key LIMIT ? OFFSET ?"
@@ -515,7 +515,21 @@ async fn test_notification(
 ) -> Result<Response, ApiError> {
     use crate::discord::Delivery;
     info!(notification_key = %key, "sending test notification");
-    let result = state.service.test_notification(&key).await?;
+    // Bound the whole operation, including lock waits and optional metadata,
+    // below the proxy's 40-second and browser's 45-second test deadlines.
+    let result = match tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        state.service.test_notification(&key),
+    )
+    .await
+    {
+        Ok(result) => result?,
+        Err(_) => {
+            return Ok((StatusCode::GATEWAY_TIMEOUT, Json(ErrorBody {
+                error: "Test delivery could not be confirmed within 30 seconds. It may have arrived; check Discord before sending another test.",
+            })).into_response());
+        }
+    };
     let (status, error) = match result {
         Some(Delivery::Sent) => return Ok(StatusCode::NO_CONTENT.into_response()),
         None => (

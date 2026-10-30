@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
+	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { api, errorMessage, colorHex, type EmbedColors, type Health, type Notification, type Show, type DeliveryState } from '$lib/api';
 	import Time from '$lib/Time.svelte';
 	import ShowPoster from '$lib/ShowPoster.svelte';
@@ -39,6 +41,7 @@
 	let previewDialog = $state<HTMLDialogElement>();
 	let selectedNotification = $state<Notification | null>(null);
 	let activityView = $state<'upcoming' | 'history'>('upcoming');
+	let activityRoute = '';
 	let hasNext = $state(false);
 	let alive = true;
 	const pageSize = 20;
@@ -61,7 +64,16 @@
 	const stateLabels: Record<DeliveryState, string> = { pending: 'Scheduled', sending: 'Attempt recorded', sent: 'Sent', uncertain: 'Unconfirmed', failed: 'Failed', covered: 'Already notified' };
 	const stateClasses: Record<DeliveryState, string> = { pending: 'badge-info', sending: 'badge-warning', sent: 'badge-success', uncertain: 'badge-warning', failed: 'badge-error', covered: 'badge-ghost' };
 
-	async function refresh(pageOffset = offset, view = activityView) {
+	$effect(() => {
+		const requestedView = page.url.searchParams.get('view') === 'history' ? 'history' : 'upcoming';
+		const route = `${page.url.pathname}?view=${requestedView}`;
+		if (section === 'activity' && route !== activityRoute && !refreshing && !busy) {
+			activityRoute = route;
+			untrack(() => { void refresh(0, requestedView); });
+		}
+	});
+
+	async function refresh(pageOffset = offset, view: 'upcoming' | 'history' = page.url.searchParams.get('view') === 'history' ? 'history' : 'upcoming') {
 		if (refreshing || busy) return;
 		refreshing = true;
 		try {
@@ -76,6 +88,15 @@
 			colors = nextColors;
 			shows = nextShows;
 			notifications = nextNotifications.slice(0, pageSize);
+			if (selectedNotification && section === 'activity') {
+				const nextSelected = notifications.find((notification) => notification.key === selectedNotification?.key);
+				if (nextSelected) selectedNotification = nextSelected;
+				else {
+					previewDialog?.close();
+					selectedNotification = null;
+					showToast('This notification is no longer in this view. Check Delivery history for completed attempts.');
+				}
+			}
 			hasNext = nextNotifications.length > pageSize;
 			offset = pageOffset;
 			activityView = view;
@@ -121,7 +142,8 @@
 
 	onMount(() => {
 		alive = true;
-		void refresh();
+		activityRoute = `${page.url.pathname}?view=${page.url.searchParams.get('view') === 'history' ? 'history' : 'upcoming'}`;
+		void refresh(0, section === 'activity' && page.url.searchParams.get('view') === 'history' ? 'history' : 'upcoming');
 		const timer = setInterval(() => { if (!document.hidden) void refresh(); }, 30_000);
 		const visible = () => { if (!document.hidden) void refresh(); };
 		document.addEventListener('visibilitychange', visible);
@@ -204,7 +226,7 @@
 						</dl>
 						{#if health.webhook_disabled}<div class="alert alert-warning"><p>Discord rejected the webhook. Update the webhook in Server Core’s configuration and restart it, then resume notifications here.</p></div><button class="btn btn-outline" disabled={locked} onclick={() => change('resume', 'webhook/resume', 'POST', undefined, 'Discord notifications resumed.')}>{busy === 'resume' ? 'Resuming…' : 'Resume notifications'}</button>{/if}
 						{#if !health.webhook_disabled && health.webhook_retry_at > (updatedAt ?? 0)}<p>Automatic retry after <Time value={health.webhook_retry_at} />.</p>{/if}
-						{#if health.unresolved_deliveries > 0}<div class="alert alert-warning"><span>{health.unresolved_deliveries} delivery attempt{health.unresolved_deliveries === 1 ? ' needs' : 's need'} attention. <a class="link" href="/activity">Review delivery activity</a>. Unconfirmed attempts are not retried to avoid duplicates.</span></div>{/if}
+						{#if health.unresolved_deliveries > 0}<div class="alert alert-warning"><span>{health.unresolved_deliveries} delivery attempt{health.unresolved_deliveries === 1 ? ' needs' : 's need'} attention. <a class="link" href="/activity?view=history">Review delivery activity</a>. Unconfirmed attempts are not retried to avoid duplicates.</span></div>{/if}
 					</div>
 				</aside>
 			</div>
@@ -268,8 +290,8 @@
                 <section id="activity" class="space-y-4" aria-label="Notification activity" aria-busy={refreshing}>
                     <div class="flex flex-wrap items-center justify-between gap-3">
                         <div class="tabs tabs-border tabs-sm" aria-label="Activity view">
-                            <button class="tab" class:tab-active={activityView === 'upcoming'} aria-pressed={activityView === 'upcoming'} disabled={locked} onclick={() => refresh(0, 'upcoming')}>Upcoming</button>
-                            <button class="tab" class:tab-active={activityView === 'history'} aria-pressed={activityView === 'history'} disabled={locked} onclick={() => refresh(0, 'history')}>Delivery history</button>
+                            <button class="tab" class:tab-active={activityView === 'upcoming'} aria-pressed={activityView === 'upcoming'} disabled={locked} onclick={() => goto('/activity?view=upcoming')}>Upcoming</button>
+                            <button class="tab" class:tab-active={activityView === 'history'} aria-pressed={activityView === 'history'} disabled={locked} onclick={() => goto('/activity?view=history')}>Delivery history</button>
                         </div>
                         <span class="text-xs text-base-content/60">{activityView === 'upcoming' ? 'Next air time first' : 'Latest air time first'}</span>
                     </div>
@@ -333,11 +355,12 @@
                             {#if notification.state === 'uncertain' || notification.state === 'sending'}<div class="alert alert-warning alert-soft text-sm">Delivery could not be confirmed. This attempt will not be repeated to prevent duplicates.</div>{/if}
                             {#if notification.state === 'failed'}<div class="alert alert-error alert-soft text-sm">Discord rejected this notification. Check Server Core’s logs for details.</div>{/if}
                             {#if notification.state === 'covered'}<p class="text-sm text-base-content/60">These episodes were already covered by an earlier notification.</p>{/if}
+                            {#if error}<div class="alert alert-warning" role="alert">This preview could not be refreshed. Close it and refresh Activity before sending a test.</div>{/if}
                             <EmbedPreview color={colorHex(notification.mode === 'season' ? colors.season_color : colors.episode_color)}>
                                 <p class="whitespace-pre-wrap">{notification.content}</p><ShowPoster id={notification.series_id} />
                             </EmbedPreview>
-                            <p class="text-xs text-base-content/60">Artwork is included when available. Tests send to your configured channel without changing scheduled delivery.</p>
-                            <div class="modal-action"><button class="btn" disabled={locked} onclick={() => sendTest(notification)}>{#if busy === `test:${notification.key}`}<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>{/if}{busy === `test:${notification.key}` ? 'Sending test…' : 'Send test to Discord'}</button></div>
+                            <p class="text-sm text-warning">Test sends mention @everyone in your configured Discord channel. Scheduled delivery is unchanged.</p>
+                            <div class="modal-action"><button class="btn" disabled={locked || !!error} onclick={() => sendTest(notification)}>{#if busy === `test:${notification.key}`}<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>{/if}{busy === `test:${notification.key}` ? 'Sending test…' : 'Send test · mentions @everyone'}</button></div>
                         {/if}
                     </div>
                     <form method="dialog" class="modal-backdrop"><button>Close preview</button></form>

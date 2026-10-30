@@ -97,4 +97,7 @@ test('same-origin client bridge forwards API controls and handles failures', { t
 	const offline = await fetch(`${base}/api/health`);
 	assert.equal(offline.status, 502);
 	assert.match((await offline.json()).error, /Cannot reach Server Core/);
+	const unconfirmed = await fetch(`${base}/api/notifications/episode%3A1/test`, { method: 'POST', headers: { origin: base } });
+	assert.equal(unconfirmed.status, 502);
+	assert.match((await unconfirmed.json()).error, /check Discord before sending another test/);
 });

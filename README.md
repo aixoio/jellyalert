@@ -11,6 +11,8 @@ This repository contains both parts of the application:
 
 The browser talks only to SvelteKit. SvelteKit proxies `/api` requests to Server Core, which communicates with Sonarr, SQLite, and Discord. Jelly Alert does not contact Jellyfin or a download client, and an air time does not guarantee that a downloadable release exists.
 
+Releases use `0.x.x` versions; this project will remain below `1.0.0`. See [the changelog](./CHANGELOG.md) for patch release details.
+
 ## Features
 
 - Every-episode or full-season notifications, configurable globally or per show

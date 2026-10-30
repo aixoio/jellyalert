@@ -55,3 +55,5 @@ Activity message previews start collapsed. Expand **Preview Discord embed** on a
 Click a show’s title or poster to open its series page. It shows airing and library progress for the series and each season, expandable episode details, release countdowns, remaining episodes before a notification, and explicit warnings for unconfirmed season endings. Details refresh every 30 seconds while visible.
 
 Settings includes separate episode and full-season color pickers with live embed samples. **Save colors** persists both colors in the server database. Activity previews use the saved colors; existing Discord messages retain their original appearance.
+
+Delivery warnings link directly to `/activity?view=history`. The selected activity tab follows the URL and browser navigation. Open previews update with successful refreshes and close when their entry leaves the current view; tests are disabled while refresh data is stale. Previews show the `@everyone` mention, including the warning that tests notify the channel. Failed artwork is retried every 30 seconds while visible, and when the page becomes visible again.

@@ -39,7 +39,7 @@ pub struct Show {
     pub mode: NotificationMode,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PlannedNotification {
     pub awaiting_confirmation: bool,
     pub key: String,
@@ -50,6 +50,19 @@ pub struct PlannedNotification {
     pub due_at: i64,
     pub content: String,
     pub episode_ids: Vec<i64>,
+}
+
+impl PlannedNotification {
+    /// A canonical snapshot lets claims detect even coverage-only scan changes.
+    pub fn snapshot(&self) -> anyhow::Result<String> {
+        let mut plan = self.clone();
+        plan.episode_ids.sort_unstable();
+        Ok(serde_json::to_string(&plan)?)
+    }
+
+    pub fn matches_mode(&self, mode: NotificationMode) -> bool {
+        self.mode == mode || (self.mode == NotificationMode::Episode && self.season == 0)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

@@ -99,7 +99,7 @@ pub fn build(
     let candidates: Vec<_> = planner::plan(series, episodes, tracking_since)
         .into_iter()
         .filter(|p| {
-            let eligible = p.mode == show.mode
+            let eligible = p.matches_mode(show.mode)
                 && !deliveries
                     .get(&p.key)
                     .is_some_and(|state| state != "pending")

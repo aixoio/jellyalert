@@ -27,7 +27,7 @@ Set `log_level = "trace"` in `server-config.toml` to include per-episode plannin
 
 - By default, monitor every monitored Sonarr series and episode. Sonarr's `hasFile` is the library availability check, as requested; Jellyfin is not contacted.
 - Episode mode schedules a missing episode at its `airDateUtc`, interpreted in UTC. Unknown dates wait for a later scan. Sonarr rescheduling, file imports, and monitoring changes are rechecked before sending.
-- Season mode schedules one notification at the latest air time of all episodes in a season, when at least one monitored episode is missing. Every known episode must have an air date, and numbering must be consecutive from episode 1. Completion requires a season/series finale on the final numbered episode, a later season in Sonarr, or an ended series. A midseason finale is insufficient. Specials (season 0) only get individual episode notifications.
+- Season mode schedules one notification at the latest air time of all episodes in a season, when at least one monitored episode is missing. Every known episode must have an air date, and numbering must be consecutive from episode 1. Completion requires a season/series finale on the final numbered episode, a later season in Sonarr, or an ended series. A midseason finale is insufficient. Specials (season 0) get individual episode notifications in either mode.
 - Sonarr metadata is the authority for season boundaries. Incomplete or incorrect upstream metadata can delay notifications or produce an incorrect boundary. An ongoing season with no finale or later season is deliberately held until Sonarr supplies completion evidence.
 - First startup records a persistent tracking start time. Episodes, and seasons whose final air time, predate that time are not notified. This prevents importing a historical backlog. Subsequent restarts retain that timestamp and catch up on eligible missed air times.
 - Excluded shows never get new delivery attempts. Their exclusion survives restarts, rescans, renames, and removal/readdition with the same Sonarr ID. Unexcluding resumes tracking and may catch up on episodes that aired after the tracking start time.
@@ -46,7 +46,7 @@ The process reuses HTTP clients and a bounded SQLite pool, uses SQLite WAL with 
 Discord webhook execution does not provide an application idempotency key that can make a SQLite commit and an HTTP delivery atomic. Jelly Alert prioritizes the requirement to avoid duplicate notifications:
 
 1. Atomically record a durable `sending` reservation and its covered episodes **before** posting.
-2. Send once with `wait=true`, disabled mentions, and automatic HTTP retries disabled.
+2. Send once with `wait=true`, an enabled `@everyone` mention, and automatic HTTP retries disabled.
 3. Record `sent` on success. A timeout after connecting, a server/proxy error, or an interrupted/crashed delivery remains `uncertain` or `sending` and is **never automatically repeated**.
 
 Consequently, a crash between reserving and posting, or an ambiguous network failure, can lose a notification. Guaranteed delivery and guaranteed no duplicates cannot both be promised with this webhook interface. Unresolved deliveries are visible in the health and history APIs. The durable history is retained to prevent duplicates across restarts; do not delete it to reclaim space.
@@ -119,3 +119,11 @@ Discord notifications use rich embeds with **Jelly Name** as the author and the 
 `GET /api/shows/{id}` returns read-only live Sonarr progress: episode and season details, known-episode airing/library counts, the next listed release, and the next eligible notification projection. Notification projections reuse the delivery planner, respect saved mode, coverage and delivery history, and label unconfirmed finales. Exclusions, unmonitored series and paused webhooks are shown as delivery blockers. Counts exclude specials from the series total, and do not imply an ongoing series is complete. Unknown/removed shows return 404; unavailable Sonarr data returns 502 instead of fabricated progress. Viewing progress does not schedule or send notifications.
 
 Embed colors are stored in SQLite and configurable through Settings → Discord embed colors. Episodes default to blue (#5865F2), full seasons to gold (#F1C40F). GET/PUT `/api/settings/colors` reads or atomically updates `episode_color` and `season_color` (RGB integers from 0 through 16777215). Changes apply immediately to future deliveries and test sends; changing or resetting notification modes preserves these colors. Existing Discord messages are not recolored.
+
+### Patch upgrade notes
+
+Version 0.1.5 preserves the former global notification mode when upgrading a database that still has it. Existing migration checksums remain unchanged. If an earlier upgrade already discarded that value, it cannot be recovered reliably; check the current default in Settings. Existing defaults, overrides, exclusions, and delivery history are preserved.
+
+Claims validate a canonical snapshot of the full plan, including covered episode IDs, so a concurrent scan cannot reserve an obsolete plan. Old pending rows are refreshed from Sonarr before they can be claimed.
+
+Test sends have a 30-second total backend deadline, including lock waits; optional metadata and artwork load concurrently with a five-second budget. The frontend proxy and browser allow 40 and 45 seconds respectively. If a send cannot be confirmed, check Discord before sending another test. Tests also mention `@everyone`, as shown in the dashboard preview.

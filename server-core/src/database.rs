@@ -39,6 +39,21 @@ impl Database {
     #[instrument(skip(self))]
     async fn migrate(&self) -> anyhow::Result<()> {
         debug!("checking database migrations");
+        // Preserve legacy state before unchanged historical migrations drop it.
+        let columns = sqlx::query("PRAGMA table_info(settings)")
+            .fetch_all(&self.pool)
+            .await?;
+        if columns
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "mode")
+        {
+            let mut tx = self.pool.begin().await?;
+            sqlx::query("CREATE TABLE IF NOT EXISTS legacy_default_mode (id INTEGER PRIMARY KEY CHECK (id = 1), mode TEXT NOT NULL CHECK (mode IN ('episode', 'season')))")
+                .execute(&mut *tx).await?;
+            sqlx::query("INSERT OR IGNORE INTO legacy_default_mode SELECT id, mode FROM settings WHERE id = 1")
+                .execute(&mut *tx).await?;
+            tx.commit().await?;
+        }
         // Embed SQL, not generated Rust: the SQLx migrator still validates checksums.
         Migrator::with_migrations(vec![
             Migration::new(
@@ -74,6 +89,13 @@ impl Database {
                 "embed colors".into(),
                 MigrationType::Simple,
                 include_str!("../migrations/202609210003_embed_colors.sql").into_sql_str(),
+                false,
+            ),
+            Migration::new(
+                202610300001,
+                "plan snapshots".into(),
+                MigrationType::Simple,
+                include_str!("../migrations/202610300001_plan_snapshots.sql").into_sql_str(),
                 false,
             ),
         ])
@@ -274,10 +296,10 @@ impl Database {
             .execute(&mut *tx)
             .await?;
         for plan in plans {
-            sqlx::query("INSERT OR IGNORE INTO notifications (key, series_id, mode, season, episode_id, due_at, content, retry_at, awaiting_confirmation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            sqlx::query("INSERT OR IGNORE INTO notifications (key, series_id, mode, season, episode_id, due_at, content, retry_at, awaiting_confirmation, plan_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(&plan.key).bind(series_id).bind(plan.mode.as_str()).bind(plan.season)
                 .bind(plan.episode_id).bind(plan.due_at).bind(&plan.content)
-                .bind(retries.get(&plan.key).copied().unwrap_or(0)).bind(plan.awaiting_confirmation).execute(&mut *tx).await?;
+                .bind(retries.get(&plan.key).copied().unwrap_or(0)).bind(plan.awaiting_confirmation).bind(plan.snapshot()?).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         info!(
@@ -289,7 +311,7 @@ impl Database {
     }
 
     pub async fn next_due(&self) -> anyhow::Result<Option<(String, i64, i64)>> {
-        let next = sqlx::query_as("SELECT n.key, n.series_id, max(n.due_at, n.retry_at, s.webhook_retry_at) FROM notifications n JOIN shows sh ON sh.id = n.series_id JOIN settings s ON s.id = 1 WHERE n.state = 'pending' AND n.awaiting_confirmation = 0 AND n.mode = sh.mode AND sh.excluded = 0 AND sh.active = 1 AND s.webhook_disabled = 0 AND (n.episode_id IS NULL OR NOT EXISTS (SELECT 1 FROM covered_episodes c WHERE c.episode_id = n.episode_id)) ORDER BY max(n.due_at, n.retry_at, s.webhook_retry_at), n.key LIMIT 1")
+        let next = sqlx::query_as("SELECT n.key, n.series_id, max(n.due_at, n.retry_at, s.webhook_retry_at) FROM notifications n JOIN shows sh ON sh.id = n.series_id JOIN settings s ON s.id = 1 WHERE n.state = 'pending' AND n.awaiting_confirmation = 0 AND (n.mode = sh.mode OR (n.mode = 'episode' AND n.season = 0)) AND sh.excluded = 0 AND sh.active = 1 AND s.webhook_disabled = 0 AND (n.episode_id IS NULL OR NOT EXISTS (SELECT 1 FROM covered_episodes c WHERE c.episode_id = n.episode_id)) ORDER BY max(n.due_at, n.retry_at, s.webhook_retry_at), n.key LIMIT 1")
             .fetch_optional(&self.pool).await?;
         trace!(next = ?next, "database next due notification checked");
         Ok(next)
@@ -299,8 +321,8 @@ impl Database {
     pub async fn claim(&self, plan: &PlannedNotification, now: i64) -> anyhow::Result<bool> {
         debug!(notification_key = %plan.key, series_id = plan.series_id, now, "attempting database notification claim");
         let mut tx = self.pool.begin().await?;
-        let result = sqlx::query("UPDATE notifications SET state = 'sending', attempted_at = ? WHERE key = ? AND state = 'pending' AND awaiting_confirmation = 0 AND due_at <= ? AND retry_at <= ? AND EXISTS (SELECT 1 FROM settings WHERE id = 1 AND webhook_disabled = 0 AND webhook_retry_at <= ?) AND EXISTS (SELECT 1 FROM shows WHERE id = notifications.series_id AND mode = notifications.mode AND excluded = 0 AND active = 1)")
-            .bind(now).bind(&plan.key).bind(now).bind(now).bind(now).execute(&mut *tx).await?;
+        let result = sqlx::query("UPDATE notifications SET state = 'sending', attempted_at = ? WHERE key = ? AND plan_snapshot = ? AND state = 'pending' AND awaiting_confirmation = 0 AND due_at <= ? AND retry_at <= ? AND EXISTS (SELECT 1 FROM settings WHERE id = 1 AND webhook_disabled = 0 AND webhook_retry_at <= ?) AND EXISTS (SELECT 1 FROM shows WHERE id = notifications.series_id AND (mode = notifications.mode OR (notifications.mode = 'episode' AND notifications.season = 0)) AND excluded = 0 AND active = 1)")
+            .bind(now).bind(&plan.key).bind(plan.snapshot()?).bind(now).bind(now).bind(now).execute(&mut *tx).await?;
         if result.rows_affected() == 0 {
             debug!(notification_key = %plan.key, "database notification claim rejected");
             return Ok(false);

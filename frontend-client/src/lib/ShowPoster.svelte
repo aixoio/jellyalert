@@ -1,6 +1,17 @@
 <script lang="ts">
     let { id, fullWidth = false, compact = false }: { id: number; fullWidth?: boolean; compact?: boolean } = $props();
     let failed = $state(false);
+	$effect(() => {
+		id;
+		failed = false;
+	});
+	$effect(() => {
+		if (!failed) return;
+		const retry = () => { if (!document.hidden) failed = false; };
+		const timer = setInterval(retry, 30_000);
+		document.addEventListener('visibilitychange', retry);
+		return () => { clearInterval(timer); document.removeEventListener('visibilitychange', retry); };
+	});
 </script>
 
 <figure class={fullWidth ? "absolute inset-0 size-full overflow-hidden bg-base-200" : compact ? "aspect-2/3 w-10 shrink-0 overflow-hidden rounded-box bg-base-200" : "aspect-2/3 w-20 shrink-0 overflow-hidden rounded-box bg-base-200"}>

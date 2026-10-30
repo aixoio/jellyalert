@@ -54,21 +54,37 @@ impl Service {
                 .await?;
         match content {
             Some((content, series_id, mode)) => {
-                let series = match self.sonarr.series_by_id(series_id).await {
-                    Ok(series) if series.id == series_id => Some(series),
-                    Ok(_) => {
+                // Optional metadata and artwork share a five-second budget.
+                // Leave the remaining request budget for the actual delivery.
+                let (series_result, poster_result) = tokio::join!(
+                    tokio::time::timeout(
+                        Duration::from_secs(5),
+                        self.sonarr.series_by_id(series_id)
+                    ),
+                    self.sonarr.poster(series_id)
+                );
+                let series = match series_result {
+                    Ok(Ok(series)) if series.id == series_id => Some(series),
+                    Ok(Ok(_)) => {
                         warn!(
                             series_id,
                             "test notification will be sent without series metadata because Sonarr returned the wrong series"
                         );
                         None
                     }
-                    Err(error) => {
+                    Ok(Err(error)) => {
                         warn!(series_id, error = %error, "test notification will be sent without series metadata");
                         None
                     }
+                    Err(_) => {
+                        warn!(
+                            series_id,
+                            "test notification metadata timed out; sending without it"
+                        );
+                        None
+                    }
                 };
-                let poster = match self.sonarr.poster(series_id).await {
+                let poster = match poster_result {
                     Ok(poster) => poster,
                     Err(error) => {
                         warn!(series_id, error = %error, "test notification will be sent without a poster");
