@@ -1,4 +1,5 @@
 export type Mode = 'episode' | 'season';
+export type ShowMode = Mode | 'default';
 export type DeliveryState = 'pending' | 'sending' | 'sent' | 'uncertain' | 'failed' | 'covered';
 export interface Show { id: number; title: string; excluded: boolean; active: boolean; mode: Mode; mode_overridden: boolean }
 export interface Health {

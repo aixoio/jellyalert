@@ -1,14 +1,22 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { page } from '$app/state';
-	import { api, errorMessage, type SeriesProgress, type ProgressCounts } from '$lib/api';
+	import { api, errorMessage, type SeriesProgress, type ProgressCounts, type ShowMode } from '$lib/api';
 	import Time from '$lib/Time.svelte';
 	import ShowPoster from '$lib/ShowPoster.svelte';
+	import ShowModeSelect from '$lib/ShowModeSelect.svelte';
+	import ShowTrackingToggle from '$lib/ShowTrackingToggle.svelte';
 
 	let detail = $state<SeriesProgress | null>(null);
 	let loading = $state(true);
+	let refreshing = $state(false);
 	let error = $state('');
+	let saving = $state(false);
+	let savedMode = $state<ShowMode>();
+	let saveNotice = $state('');
+	let saveError = $state('');
 	let now = $state(Math.floor(Date.now() / 1000));
-	let retry = $state(0);
+	let progressRequest: AbortController | undefined;
 	const percent = (value: number, total: number) => total ? Math.round(value / total * 100) : 0;
 	function remaining(at: number) {
 		const seconds = Math.max(0, at - now);
@@ -18,27 +26,68 @@
 		const hours = Math.floor(minutes % 1440 / 60);
 		return days ? `${days}d ${hours}h remaining` : hours ? `${hours}h ${minutes % 60}m remaining` : `${minutes}m remaining`;
 	}
+	async function loadProgress(id = page.params.id) {
+		const signal = progressRequest?.signal;
+		if (!id || !signal || signal.aborted || refreshing) return;
+		refreshing = true;
+		try {
+			const result = await api<SeriesProgress>(`shows/${id}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(35_000)]) });
+			if (signal.aborted) return;
+			detail = result;
+			savedMode = undefined;
+			error = '';
+		} catch (cause) {
+			if (!signal.aborted) error = errorMessage(cause);
+		} finally {
+			if (!signal.aborted) {
+				loading = false;
+				refreshing = false;
+			}
+		}
+	}
+
+	async function savePreference(preference: { mode: ShowMode } | { excluded: boolean }) {
+		const show = detail?.show;
+		const signal = progressRequest?.signal;
+		if (!show?.active || !signal || signal.aborted || saving || refreshing) return;
+		const setting = 'mode' in preference ? 'mode' : 'exclusion';
+		saving = true;
+		saveNotice = '';
+		saveError = '';
+		try {
+			await api<void>(`shows/${show.id}/${setting}`, { method: 'PUT', body: JSON.stringify(preference) });
+			if (signal.aborted) return;
+			if ('mode' in preference) {
+				savedMode = preference.mode;
+				saveNotice = 'Alert preference saved.';
+			} else {
+				show.excluded = preference.excluded;
+				saveNotice = preference.excluded ? 'Tracking turned off.' : 'Tracking turned on.';
+			}
+			await loadProgress(String(show.id));
+		} catch (cause) {
+			if (!signal.aborted) saveError = errorMessage(cause);
+		} finally {
+			if (!signal.aborted) saving = false;
+		}
+	}
+
 	$effect(() => {
 		const id = page.params.id;
-		retry;
 		const controller = new AbortController();
-		let active = true;
-		let fetching = false;
+		progressRequest = controller;
 		detail = null;
-		async function load() {
-			if (fetching) return;
-			fetching = true;
-			try {
-				const result = await api<SeriesProgress>(`shows/${id}`, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(35_000)]) });
-				if (active) { detail = result; error = ''; }
-			} catch (cause) { if (active) error = errorMessage(cause); }
-			finally { fetching = false; if (active) loading = false; }
-		}
 		loading = true;
-		void load();
+		refreshing = false;
+		error = '';
+		saving = false;
+		savedMode = undefined;
+		saveNotice = '';
+		saveError = '';
+		untrack(() => { void loadProgress(id); });
 		const timer = setInterval(() => { now = Math.floor(Date.now() / 1000); }, 1000);
-		const refresh = setInterval(() => { if (!document.hidden) void load(); }, 30_000);
-		return () => { active = false; controller.abort(); clearInterval(timer); clearInterval(refresh); };
+		const refresh = setInterval(() => { if (!document.hidden && !saving) void loadProgress(id); }, 30_000);
+		return () => { controller.abort(); clearInterval(timer); clearInterval(refresh); };
 	});
 </script>
 
@@ -53,11 +102,20 @@
 
 <div class="grid min-w-0 grid-cols-1 gap-6">
 	<a class="link" href="/shows">← All shows</a>
-	{#if error}<div class="alert alert-error" role="alert"><span>{error}{detail ? ' Showing the last successful update.' : ''}</span><button class="btn btn-sm" onclick={() => retry++}>Retry</button></div>{/if}
+	{#if error}<div class="alert alert-error" role="alert"><span>{error}{detail ? ' Showing the last successful progress update.' : ''}</span><button class="btn btn-sm" onclick={() => loadProgress()} disabled={refreshing || saving}>Retry</button></div>{/if}
 	{#if loading}<p role="status">Loading series progress…</p>
 	{:else if detail}
 		<header class="flex flex-wrap items-center justify-between gap-4">
-			<div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-4"><ShowPoster id={detail.show.id} /><div class="space-y-2"><h1 class="card-title">{detail.show.title}</h1><div class="flex flex-wrap items-center gap-4"><span class="badge badge-outline">{detail.status}</span><span class="badge badge-soft">{detail.show.mode === 'season' ? 'Full-season alerts' : 'Episode alerts'}</span></div><p>{detail.show.mode_overridden ? 'Individual notification preference' : 'Following your default preference'}</p></div></div>
+			<div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-4">
+				<ShowPoster id={detail.show.id} />
+				<div class="space-y-2"><h1 class="card-title wrap-anywhere">{detail.show.title}</h1><span class="badge badge-outline">{detail.status}</span></div>
+			</div>
+			<div class="w-full space-y-2 sm:w-56">
+				<ShowModeSelect show={detail.show} disabled={saving || refreshing} {savedMode} onChange={(mode) => savePreference({ mode })} />
+				<ShowTrackingToggle show={detail.show} disabled={saving || refreshing} onChange={(excluded) => savePreference({ excluded })} />
+				<p class="text-sm" role="status">{saveNotice || (saving ? 'Saving…' : '')}</p>
+				{#if saveError}<p class="text-sm text-error" role="alert">{saveError}</p>{/if}
+			</div>
 		</header>
 		{#if detail.notification_block}<div class="alert alert-warning">{detail.notification_block}</div>{/if}
 		<section class="card card-border"><div class="card-body">

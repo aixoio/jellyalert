@@ -5,6 +5,8 @@
 	import { api, errorMessage, colorHex, type EmbedColors, type Health, type Notification, type Show, type DeliveryState } from '$lib/api';
 	import Time from '$lib/Time.svelte';
 	import ShowPoster from '$lib/ShowPoster.svelte';
+	import ShowModeSelect from '$lib/ShowModeSelect.svelte';
+	import ShowTrackingToggle from '$lib/ShowTrackingToggle.svelte';
 	import EmbedPreview from '$lib/EmbedPreview.svelte';
 
 	let { section }: { section: 'overview' | 'shows' | 'activity' } = $props();
@@ -250,18 +252,10 @@
                                         <div class="flex flex-wrap items-center justify-between gap-4"><span class="badge" class:badge-ghost={!show.active || show.excluded} class:badge-success={show.active && !show.excluded} class:badge-soft={show.active && !show.excluded}>{!show.active ? 'Removed from Sonarr' : show.excluded ? 'Excluded' : 'Tracked'}</span>{#if busy === `show:${show.id}` || busy === `mode:${show.id}`}<span class="loading loading-spinner loading-xs" aria-label="Saving"></span>{/if}</div>
                                         <h2 class="card-title wrap-anywhere"><a class="link link-hover" href={`/shows/${show.id}`} aria-label={`View ${show.title} progress`}>{show.title}</a></h2>
                                         <div class="mt-auto grid gap-3">
-                                            <label class="fieldset"><span class="fieldset-legend">Notify me</span><select class="select w-full" aria-label={`Notification mode for ${show.title}`} value={show.mode_overridden ? show.mode : 'default'} disabled={locked || !show.active}
-                                        onchange={(event) => {
-                                            const mode = event.currentTarget.value;
-                                            event.currentTarget.value = show.mode_overridden ? show.mode : 'default';
-                                            if (mode !== 'episode' && mode !== 'season' && mode !== 'default') return;
-                                            void change(`mode:${show.id}`, `shows/${show.id}/mode`, 'PUT', { mode }, `${show.title}: ${mode === 'default' ? 'use default' : mode === 'episode' ? 'every episode' : 'full seasons'} saved.`);
-                                        }}>
-                                        <option value="default">Use default{!show.mode_overridden ? ` · ${show.mode === 'episode' ? 'Every episode' : 'Full seasons'}` : ''}</option>
-                                        <option value="episode">Every episode</option>
-                                        <option value="season">Full seasons</option>
-                                    </select></label>
-                                            <label class="flex items-center justify-between gap-4"><span>Track this show</span><input type="checkbox" class="toggle" aria-label={`Track ${show.title}`} checked={!show.excluded} disabled={locked || !show.active} onchange={(event) => { event.currentTarget.checked = !show.excluded; void change(`show:${show.id}`, `shows/${show.id}/exclusion`, 'PUT', { excluded: !show.excluded }, `${show.title} ${show.excluded ? 'is now tracked' : 'is now excluded'}.`); }} /></label>
+                                            <ShowModeSelect {show} disabled={locked}
+                                                onChange={(mode) => change(`mode:${show.id}`, `shows/${show.id}/mode`, 'PUT', { mode }, `Alert preference saved for ${show.title}.`)} />
+                                            <ShowTrackingToggle {show} disabled={locked}
+                                                onChange={(excluded) => change(`show:${show.id}`, `shows/${show.id}/exclusion`, 'PUT', { excluded }, `${show.title} ${excluded ? 'is now excluded' : 'is now tracked'}.`)} />
                                             <p>{!show.active ? 'Restore this show in Sonarr to resume tracking.' : show.excluded ? 'Notifications are off. Your preference is kept.' : show.mode === 'season' ? 'One alert when a full season has aired.' : 'An alert when each missing episode airs.'}</p>
                                         </div>
                                     </div>

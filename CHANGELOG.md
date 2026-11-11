@@ -2,6 +2,10 @@
 
 Jelly Alert uses `0.x.x` release versions and will remain below `1.0.0`.
 
+## 0.1.6 — 2026-11-11
+
+- Choose a show's notification preference and tracking state from its series page.
+
 ## 0.1.5 — 2026-10-30
 
 - Reject stale notification claims when a scan changes a plan, including its episode coverage.
